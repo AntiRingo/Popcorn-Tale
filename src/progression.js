@@ -70,9 +70,9 @@ export function craftingCost(s, blueprint) {
 }
 
 export const FIELD_TASKS = {
-  quarry: { name: '采集晶矿', duration: 3 * 60000, icon: 'spark', description: '小径旁露出一簇晶矿，花花停下来慢慢开采。', materials: { ore: 6, thread: 2 }, gold: 0 },
+  quarry: { name: '采集晶矿', duration: 5 * 60000, icon: 'spark', description: '小径旁露出一簇晶矿，花花停下来慢慢开采。', materials: { ore: 6, thread: 2 }, gold: 0 },
   repair: { name: '修复林间营地', duration: 5 * 60000, icon: 'shield', description: '修补风雨中的营地，旅人会留下谢礼。', materials: { ore: 3, thread: 6 }, gold: 45 },
-  rescue: { name: '照料迷途精灵', duration: 10 * 60000, icon: 'heart', description: '为受伤的精灵包扎，守候它慢慢恢复精神。', materials: { essence: 2, thread: 4 }, gold: 0 },
+  rescue: { name: '照料迷途精灵', duration: 5 * 60000, icon: 'heart', description: '为受伤的精灵包扎，守候它慢慢恢复精神。', materials: { essence: 2, thread: 4 }, gold: 0 },
 };
 export function fieldTaskRewards(task) {
   const definition = FIELD_TASKS[task.kind];

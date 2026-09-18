@@ -210,7 +210,7 @@ test('legacy saves migrate without losing currencies, levels, recipes or enhance
   s.version=1;delete s.gear.ring;
   for(const key of ['equipped','warehouse','nextItemId','materials','blueprints','talents','zoneKills','bossRooms','inBoss','reviveAt','deathLoss','heroCooldown','enemyCooldown'])delete s[key];
   const loaded=restore(serialize(s),1000);assert.ok(loaded);
-  assert.equal(loaded.version,6);assert.equal(loaded.level,12);assert.equal(loaded.gold,456);
+  assert.equal(loaded.version, 7);assert.equal(loaded.level,12);assert.equal(loaded.gold,456);
   assert.equal(loaded.gear.weapon,4);assert.equal(loaded.inventory.butter,15);assert.equal(loaded.recipes.butter,2);
   assert.equal(talentPoints(loaded),12);assert.deepEqual(loaded.warehouse,[]);
   s.phase='rest';s.hp=0;const dead=restore(serialize(s),2000);assert.ok(dead);assert.equal(dead.reviveAt,1000+REVIVE_MS);

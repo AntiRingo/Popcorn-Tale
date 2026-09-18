@@ -1,7 +1,7 @@
 import { SAVE_KEY, STEP_MS, MAX_OFFLINE_MS, INGREDIENTS, ZONES, MONSTERS, CLASSES, RECIPES, ACHIEVEMENTS, stats, xpNeeded, gearCost, gearMaterialCost, recipeCost, newGame, advance, upgradeGear, cook, travel, changeClass, achievementProgress, claimAchievement, serialize, restore, enterBoss, upgradeTalent, craft, salvageItem, salvageMatching, setAutoSalvage, toggleItemLock, placeOrder, discardFlyer, settleRealTime } from './engine.js';
 import { EQUIPMENT_SLOTS, QUALITIES, STAT_LABELS, PERCENT_STATS, MATERIALS, TALENTS, BLUEPRINTS, itemStats, itemName, itemScore, talentPoints, talentAvailable, craftingCost, salvageRewards, flyerProducts, orderProduct, MAX_PENDING_ORDERS, matchesSalvageRule, JOURNEY_EVENTS } from './progression.js';
 import { drawScene, paintArt } from './art.js';
-import { beastName, beastStats, beastUpgradeCost, bossFeedCost, contractChance, preferBeast, upgradeBeast, feedBeast, BEAST_MAX_RANK, BOSS_MATURE_GROWTH, BOSS_MAX_GROWTH } from './engine.js';
+import { beastName, beastStats, beastUpgradeCost, beastAdvanceCost, beastLevelCap, beastXpNeeded, beastForm, BOSS_FORMS, contractChance, preferBeast, upgradeBeast, feedBeast, BEAST_MAX_RANK, BEAST_MAX_GROWTH } from './engine.js';
 import { classProgress, highestLevel, equipWarehouseItem, unequipItem } from './engine.js';
 import { FIELD_TASKS, fieldTaskRewards } from './progression.js';
 
@@ -100,26 +100,43 @@ function kitchenView() {
 }
 function beastStatus(beast) {
   if (beast.reviveAt) return `休养中 · ${countdown(beast.reviveAt)} 后恢复`;
-  if (MONSTERS[beast.id].boss && beast.growth < BOSS_MATURE_GROWTH) return `宝宝成长 ${beast.growth} / ${BOSS_MATURE_GROWTH} · 尚未解锁出战`;
   if (state.activeBeast === beast.id) return '正在出战 · 优先承受攻击';
   return '准备就绪 · 等待召唤';
 }
 function beastBattleStatus() {
   if (state.heroClass !== 'tamer') return '转职驯兽师，让伙伴一起冒险';
   if (state.phase === 'rest') return '花花正在休养，伙伴在营地等待';
-  if (state.activeBeast) return `${beastName(state.activeBeast)}守护中`;
+  if (state.activeBeast) return `${beastName(state.beasts[state.activeBeast])}守护中`;
   if (state.summonCooldown) return `召唤中 · 约 ${(state.summonCooldown / state.speed / 1000).toFixed(1)} 秒 · 花花承伤`;
-  return '暂无可出战伙伴 · 花花承伤，等待契约兽恢复';
+  return '暂无可出战伙伴 · 花花以 10% 攻击力自保，等待伙伴恢复';
 }
 function beastLoadoutCard() {
-  return `<article class="item-card beast-slot"><div class="item-top"><span>${icon('leaf')} 契约召唤</span><b>驯兽师专属</b></div><h3>以伙伴代替武器</h3><p class="item-meta">武器与武器强化不生效</p><p class="beast-explanation">通过晶体强化伙伴，通过喂养培养 Boss 宝宝。其他职业的装备独立保管，需先放回共享仓库才能转交。</p><button class="button secondary" data-action="nav" data-view="beasts">前往契约兽营地</button></article>`;
+  return `<article class="item-card beast-slot"><div class="item-top"><span>${icon('leaf')} 契约召唤</span><b>驯兽师专属</b></div><h3>以伙伴代替武器</h3><p class="item-meta">武器与武器强化不生效</p><p class="beast-explanation">出战获得经验，满级消耗素材进阶；同种晶体可额外强化。Boss 宝宝从初始形态就能战斗。其他职业的装备独立保管，需先放回共享仓库才能转交。</p><button class="button secondary" data-action="nav" data-view="beasts">前往契约兽营地</button></article>`;
+}
+function beastExperienceStatus(beast) {
+  return beast.level >= beastLevelCap(beast) ? beast.growth >= BEAST_MAX_GROWTH ? '已达到最高等级' : '等级已满 · 消耗素材进阶后继续升级' : '战斗经验 ' + beast.xp + ' / ' + beastXpNeeded(beast.level);
 }
 function beastsView() {
   const beasts=Object.values(state.beasts);
-  return `${heading('A BOND BEYOND THE BATTLE','契约兽营地','每一次契约，都是一段新的陪伴。',`<span class="collection-count"><b>${beasts.length}</b> / ${Object.keys(MONSTERS).length} 已契约</span>`)}<div class="beast-banner"><div>${art('hero','tamer',100,105,2.5)}<div><h3>空手结契，与魔物并肩</h3><p>驯兽师击败普通魔物有 ${(contractChance(state)*100).toFixed(0)}% 概率签约（基础 20%，幸运可提高）；重复契约获得 1 枚同种晶体，重复 Boss 契约获得 5 枚。</p><p>伙伴倒下后休养现实时间 1 小时；自动召唤下一只可用伙伴约需 2.85 秒（1×）。召唤期间花花承伤，无可用伙伴时等待恢复。</p></div></div><div class="beast-banner-footer"><b data-beast-battle-status>${beastBattleStatus()}</b><button class="button secondary" data-action="classes">${state.heroClass==='tamer'?'切换职业':'转职驯兽师'}</button></div></div><div class="system-note">${icon('heart')} Boss 宝宝必定随驯兽师的首领胜利加入，需用风味精华和首领专属素材喂养至 3 阶才能出战，最高 5 阶。休养期限不受暂停、倍速、转职或关闭页面影响。</div>${beasts.length?`<div class="beast-grid">${beasts.map(beast=>{
-    const id=beast.id, monster=MONSTERS[id], st=beastStats(state,id), cost=bossFeedCost(id,beast.growth);
-    return `<article class="beast-card ${monster.boss?'boss-baby':''} ${state.activeBeast===id?'active-beast':''}"><div class="item-top"><span>${monster.boss?'Boss 宝宝':'契约伙伴'}</span><b>${state.preferredBeast===id?'优先召唤':'自动轮换'}</b></div><div class="beast-portrait">${art('monster',monster.kind,126,100,monster.boss&&beast.growth<3?1.9:2.6,`data-boss="${!!monster.boss}"`)}${monster.boss?`<span>${beast.growth} / ${BOSS_MAX_GROWTH} 阶</span>`:''}</div><h3>${beastName(id)} <small>+${beast.rank}</small></h3><p class="beast-status" data-beast-status="${id}">${beastStatus(beast)}</p><div class="meter health beast-health"><i data-beast-bar="${id}" style="width:${beast.hp/st.maxHp*100}%"></i></div><p class="beast-hp" data-beast-hp="${id}">生命 ${beast.hp} / ${st.maxHp}</p><div class="beast-properties"><span>攻击 <b>${st.attack}</b></span><span>防御 <b>${st.defense}</b></span><span>速度 <b>${st.speed}</b></span></div><div class="beast-crystals">同种晶体 <b data-beast-crystals="${id}">${beast.crystals}</b><small>每次强化增加基础攻击、生命与防御的 12%</small></div><div class="beast-actions"><button class="button secondary" data-action="beast-prefer" data-id="${id}">${state.preferredBeast===id?'已优先':'优先召唤'}</button><button class="button" data-action="beast-upgrade" data-id="${id}">${beast.rank>=BEAST_MAX_RANK?'强化已满级':`强化 · ${beastUpgradeCost(beast)} 晶体`}</button></div>${monster.boss?`<div class="beast-feeding"><h4>${beast.growth>=BOSS_MAX_GROWTH?'已完成培养':`喂养至 ${beast.growth+1} 阶`}</h4><p>${beast.growth<BOSS_MATURE_GROWTH?'喂养至 3 阶后解锁出战，每阶提升基础属性 15%。':'已经学会战斗，还可以继续培养。'}</p>${cost?`<div class="craft-cost">${Object.entries(cost).map(([key,n])=>`<span>${MATERIALS.find(m=>m.id===key).name} <b data-material="${key}">${state.materials[key]}</b> / ${n}</span>`).join('')}</div><button class="button secondary" data-action="beast-feed" data-id="${id}">喂养稀有素材</button>`:''}</div>`:''}</article>`;
-  }).join('')}</div>`:`<div class="empty-state">${icon('leaf')}<h3>第一位伙伴，正在等你。</h3><p>Lv.1 即可转职驯兽师，首次转职获得黄油小菇。用新的战斗方式，结识更多魔物朋友。</p><button class="button" data-action="classes">选择驯兽师</button></div>`}`;
+  return `${heading('A BOND BEYOND THE BATTLE','契约兽营地','从第一次并肩作战，到一起长大。',`<span class="collection-count"><b>${beasts.length}</b> / ${Object.keys(MONSTERS).length} 已契约</span>`)}
+  <div class="beast-banner"><div>${art('hero','tamer',100,105,2.5)}<div><h3>空手结契，与魔物并肩</h3><p>驯兽师击败普通魔物有 ${(contractChance(state)*100).toFixed(0)}% 概率签约（基础 20%，幸运可提高）；重复契约获得 1 枚同种晶体，重复 Boss 契约获得 5 枚。</p><p>伙伴倒下后休养现实时间 10 分钟；自动召唤下一只可用伙伴约需 2.85 秒（1×）。全部伙伴阵亡时，花花以 10% 攻击力自保。</p></div></div><div class="beast-banner-footer"><b data-beast-battle-status>${beastBattleStatus()}</b><button class="button secondary" data-action="classes">${state.heroClass==='tamer'?'切换职业':'转职驯兽师'}</button></div></div>
+  <div class="system-note">${icon('heart')} 出战伙伴通过胜利独立升级，每级提升基础属性 6%；初始上限 Lv.5，满级消耗素材进阶，每阶增加 15% 基础属性并解锁 5 级上限，最高 Lv.30。Boss 宝宝即可战斗，进阶后逐步改变形态。</div>
+  ${beasts.length?`<div class="beast-grid">${beasts.map(beast=>{
+    const id=beast.id, monster=MONSTERS[id], st=beastStats(state,id), cost=beastAdvanceCost(id,beast.growth), form=beastForm(beast), cap=beastLevelCap(beast);
+    return `<article class="beast-card ${monster.boss?'boss-baby':''} ${state.activeBeast===id?'active-beast':''}">
+    <div class="item-top"><span>${form?form.name:'契约伙伴'}</span><b>${state.preferredBeast===id?'优先召唤':'自动轮换'}</b></div>
+    <div class="beast-portrait">${art('beast',id,126,100,monster.boss?1.8:2.2,`data-growth="${beast.growth}"`)}<span>${beast.growth} / ${BEAST_MAX_GROWTH} 阶</span></div>
+    <h3>${beastName(beast)} <small>+${beast.rank}</small></h3>
+    <div class="beast-level"><b>Lv.${beast.level} <small>/ ${cap}</small></b><span data-beast-xp="${id}">${beastExperienceStatus(beast)}</span></div>
+    <div class="meter experience beast-xp"><i data-beast-xp-bar="${id}" style="width:${beast.level===cap?100:beast.xp/beastXpNeeded(beast.level)*100}%"></i></div>
+    ${form?`<div class="beast-form-track" aria-label="Boss 形态成长">${BOSS_FORMS.map(stage=>`<span class="${form.id===stage.id?'current':beast.growth>=stage.growth?'reached':''}">${stage.name.replace('形态','')}<small>${stage.growth} 阶</small></span>`).join('')}</div>`:''}
+    <p class="beast-status" data-beast-status="${id}">${beastStatus(beast)}</p><div class="meter health beast-health"><i data-beast-bar="${id}" style="width:${beast.hp/st.maxHp*100}%"></i></div><p class="beast-hp" data-beast-hp="${id}">生命 ${beast.hp} / ${st.maxHp}</p>
+    <div class="beast-properties"><span>攻击 <b>${st.attack}</b></span><span>防御 <b>${st.defense}</b></span><span>速度 <b>${st.speed}</b></span></div>
+    <div class="beast-crystals">同种晶体 <b data-beast-crystals="${id}">${beast.crystals}</b><small>每次强化增加基础攻击、生命与防御的 12%</small></div>
+    <div class="beast-actions"><button class="button secondary" data-action="beast-prefer" data-id="${id}">${state.preferredBeast===id?'已优先':'优先召唤'}</button><button class="button" data-action="beast-upgrade" data-id="${id}">${beast.rank>=BEAST_MAX_RANK?'强化已满级':`强化 · ${beastUpgradeCost(beast)} 晶体`}</button></div>
+    <div class="beast-feeding"><h4>${cost?`进阶至 ${beast.growth+1} 阶 · 等级上限 Lv.${cap+5}`:'已完成全部进阶'}</h4><p>${cost?`需先战斗达到 Lv.${cap}，再消耗素材进阶。${monster.boss?'0 阶宝宝 → 1 阶幼年 → 3 阶成熟 → 5 阶觉醒。':'进阶提升攻击、生命上限和防御。'}`:'继续通过战斗成长至 Lv.30。'}休养中的伙伴进阶不会提前复活。</p>
+    ${cost?`<div class="craft-cost">${Object.entries(cost).map(([key,n])=>`<span>${MATERIALS.find(m=>m.id===key).name} <b data-material="${key}">${state.materials[key]}</b> / ${n}</span>`).join('')}</div><button class="button secondary" data-action="beast-feed" data-id="${id}">消耗素材进阶</button>`:''}</div></article>`;
+  }).join('')}</div>`:`<div class="empty-state">${icon('leaf')}<h3>第一位伙伴，正在等你。</h3><p>Lv.1 即可转职驯兽师，首次转职获得黄油小菇。通过战斗与进阶，一起成长。</p><button class="button" data-action="classes">选择驯兽师</button></div>`}`;
 }
 function syncBeasts() {
   setText('[data-beast-battle-status]',beastBattleStatus());
@@ -131,11 +148,11 @@ function syncBeasts() {
     document.querySelectorAll(`[data-beast-bar="${beast.id}"]`).forEach(el=>el.style.width=`${beast.hp/st.maxHp*100}%`);
   }
   const active=state.beasts[state.activeBeast];
-  setText('#beast-health-label',active?`生命 ${active.hp} / ${beastStats(state,active.id).maxHp}`:'');
+  setText('#beast-health-label',active?`Lv.${active.level} · ${active.growth} 阶 · 生命 ${active.hp} / ${beastStats(state,active.id).maxHp} · ${beastExperienceStatus(active)}`:'');
   const strip=document.getElementById('beast-battle-strip'); if(strip)strip.hidden=state.heroClass!=='tamer';
   document.querySelectorAll('[data-action="beast-prefer"]').forEach(el=>el.disabled=!ownsGame||state.preferredBeast===el.dataset.id);
   document.querySelectorAll('[data-action="beast-upgrade"]').forEach(el=>{const b=state.beasts[el.dataset.id];el.disabled=!ownsGame||b.rank>=BEAST_MAX_RANK||b.crystals<beastUpgradeCost(b);});
-  document.querySelectorAll('[data-action="beast-feed"]').forEach(el=>{const b=state.beasts[el.dataset.id],cost=bossFeedCost(b.id,b.growth);el.disabled=!ownsGame||!cost||Object.entries(cost).some(([id,n])=>state.materials[id]<n);});
+  document.querySelectorAll('[data-action="beast-feed"]').forEach(el=>{const b=state.beasts[el.dataset.id],cost=beastAdvanceCost(b.id,b.growth);el.disabled=!ownsGame||!cost||b.level<beastLevelCap(b)||Object.entries(cost).some(([id,n])=>state.materials[id]<n);});
 }
 function bestiaryView() {
   const entries=Object.entries(MONSTERS).filter(([,m])=>bestiaryFilter==='all'||(bestiaryFilter==='boss'?m.boss:!m.boss));
@@ -276,7 +293,7 @@ function syncUI() {
   }
   if(state.phase==='task'){values['battle-status']=!ownsGame?'另一窗口正在冒险':'正在处理旅途事务';if(ownsGame)values['global-status']='花花正在忙碌，事务按现实时间处理';values.turn=`${FIELD_TASKS[state.fieldTask.kind].name} · 完成后继续探索`;}
   if(['travel','event','rest','task'].includes(state.phase))values.round='—';
-  if(state.heroClass==='tamer'&&['hero','enemy'].includes(state.phase))values.turn=state.activeBeast?`${beastName(state.activeBeast)}并肩作战`:beastBattleStatus();
+  if(state.heroClass==='tamer'&&['hero','enemy'].includes(state.phase))values.turn=state.activeBeast?`${beastName(state.beasts[state.activeBeast])}并肩作战`:beastBattleStatus();
   Object.entries(values).forEach(([key,value])=>setText(`[data-bind="${key}"]`,value));
   document.querySelectorAll('[data-bar="hp"]').forEach(el=>el.style.width=`${Math.max(0,state.hp/st.maxHp*100)}%`);
   document.querySelectorAll('[data-bar="xp"]').forEach(el=>el.style.width=`${state.xp/xpNeeded(state.level)*100}%`);
@@ -342,7 +359,7 @@ function settingsDialog() {
   showModal(`<div class="eyebrow">MAKE YOURSELF AT HOME</div><h2>旅途小设置</h2><p class="modal-subtitle">按你喜欢的节奏，慢慢成为更美味的自己。</p><div class="setting-row"><div><b>战斗音效</b><p>轻柔的像素打击音，默认关闭</p></div><button class="button secondary sound-button" data-action="sound" aria-label="切换音效">${icon(state.sound?'sound':'mute')}</button></div><div class="setting-row"><div><b>本地存档</b><p>${storageAvailable?'每 5 秒自动保存，也可手动备份。':'浏览器存储不可用，请导出备份。'}</p></div><button class="button secondary" data-action="save">立即保存</button></div><div class="setting-row"><div><b>带着花花去别处</b><p>通过存档文件在不同浏览器之间迁移</p></div><div class="setting-buttons"><button class="button secondary" data-action="export">${icon('download')} 导出</button><button class="button secondary" data-action="import">导入</button></div></div><div class="setting-note">${icon('clock')} 页面在后台时继续按真实时间结算。浏览器休眠或关闭后，重回冒险可领取最长 8 小时的离线收获。</div>`);
 }
 function helpDialog() {
-  showModal(`<div class="eyebrow">YOUR FIRST LITTLE ADVENTURE</div><h2>欢迎来到爆米花物语</h2><p class="modal-subtitle">花花是一颗原味爆米花。它相信世界上一定有一种调料，能让自己变得独一无二。</p><div class="help-steps"><p><b>01 · 放心出发</b>战斗自动进行，击败魔物获得经验、金币、调料、素材、装备和图纸。更高评分的装备自动穿戴，多余装备存入仓库。</p><p><b>02 · 越来越美味</b>装备工坊中可按图纸制作武器、防具、护符和戒指；强化同时消耗金币与素材，并随栏位保留。闲置装备可单件或整组分解；自动分解可筛选品质、等级和部位，锁定装备始终保留。职业等级、经验、装备、强化和天赋独立保存；共享仓库可手动取用装备。新职业从 Lv.1 开始，天赋初始赠送 1 点，每次升级再得 1 点；厨房风味对所有职业永久生效。</p><p><b>03 · 去更远的地方</b>持续击败区域魔物，有机会发现隐藏 Boss 房。入口会保留，必须手动进入；胜利获得专属装备、素材和图纸，并解锁下一站。</p><p><b>04 · 属于你的战斗方式</b>速度越高出手越快；幸运提高掉率与品质；闪避可躲开攻击；生命偷取按实际造成的伤害恢复生命。装备与天赋都能提升这些属性。</p><p><b>05 · 倒下后，再出发</b>死亡后扣除 10% 金币与各类素材（向上取整），保留等级、装备、图纸、天赋和强化。现实时间 10 分钟后自动满血复活；暂停、倍速和刷新不影响倒计时。</p><p><b>06 · 小径上的新故事</b>战斗与事件之间会经过较长的探索，可能采到素材、意外受伤、休息恢复或收到传单。探索不显示剩余时间。采集晶矿、修复营地、照料精灵需要现实时间 3、5、10 分钟，处理期间停止遇怪，到期自动发放谢礼并继续探索。可手动花金币订购传单商品，按现实时间配送并自动入库。传单每 30 分钟刷新补货，已付款订单不受影响；查看传单和等待配送都不会中断挂机。</p><p><b>07 · 把冒险装进小窗</b>点击「小窗冒险」打开独立观战窗口。支持画中画的浏览器可置顶；其余浏览器打开普通小窗口。暂停时不积累离线收益。</p><p><b>08 · 和魔物成为伙伴</b>Lv.1 可选择驯兽师，首次转职赠送黄油小菇；不使用武器，由契约兽攻击并优先承伤。普通魔物基础签约概率 20%，重复契约变成同种晶体，可在营地强化。伙伴倒下后现实时间 1 小时恢复，自动换召期间花花承伤。驯兽师击败首领必得 Boss 宝宝，喂养风味精华与首领素材至 3 阶才能出战。</p></div><button class="button" data-action="close">准备好了，继续冒险 ${icon('arrow')}</button>`);
+  showModal(`<div class="eyebrow">YOUR FIRST LITTLE ADVENTURE</div><h2>欢迎来到爆米花物语</h2><p class="modal-subtitle">花花是一颗原味爆米花。它相信世界上一定有一种调料，能让自己变得独一无二。</p><div class="help-steps"><p><b>01 · 放心出发</b>战斗自动进行，击败魔物获得经验、金币、调料、素材、装备和图纸。更高评分的装备自动穿戴，多余装备存入仓库。</p><p><b>02 · 越来越美味</b>装备工坊中可按图纸制作武器、防具、护符和戒指；强化同时消耗金币与素材，并随栏位保留。闲置装备可单件或整组分解；自动分解可筛选品质、等级和部位，锁定装备始终保留。职业等级、经验、装备、强化和天赋独立保存；共享仓库可手动取用装备。新职业从 Lv.1 开始，天赋初始赠送 1 点，每次升级再得 1 点；厨房风味对所有职业永久生效。</p><p><b>03 · 去更远的地方</b>持续击败区域魔物，有机会发现隐藏 Boss 房。入口会保留，必须手动进入；胜利获得专属装备、素材和图纸，并解锁下一站。</p><p><b>04 · 属于你的战斗方式</b>速度越高出手越快；幸运提高掉率与品质；闪避可躲开攻击；生命偷取按实际造成的伤害恢复生命。装备与天赋都能提升这些属性。</p><p><b>05 · 倒下后，再出发</b>死亡后扣除 10% 金币与各类素材（向上取整），保留等级、装备、图纸、天赋和强化。现实时间 10 分钟后自动满血复活；暂停、倍速和刷新不影响倒计时。</p><p><b>06 · 小径上的新故事</b>战斗与事件之间会经过约 20 秒的探索（1×），可能采到素材、意外受伤、休息恢复或收到传单。探索不显示剩余时间。采集晶矿、修复营地、照料精灵均需要现实时间 5 分钟，处理期间停止遇怪，到期自动发放谢礼并继续探索。可手动花金币订购传单商品，按现实时间配送并自动入库。传单每 30 分钟刷新补货，已付款订单不受影响；查看传单和等待配送都不会中断挂机。</p><p><b>07 · 把冒险装进小窗</b>点击「小窗冒险」打开独立观战窗口。支持画中画的浏览器可置顶；其余浏览器打开普通小窗口。暂停时不积累离线收益。</p><p><b>08 · 和魔物成为伙伴</b>Lv.1 可选择驯兽师，首次转职赠送黄油小菇；不使用武器，由契约兽攻击并优先承伤。普通魔物基础签约概率 20%，重复契约变成同种晶体，可在营地强化。伙伴倒下后现实时间 10 分钟恢复，自动换召期间花花承伤；全部伙伴阵亡时以 10% 攻击力自保。出战伙伴通过胜利获得独立经验，初始等级上限 Lv.5，满级消耗素材进阶，每阶解锁 5 级，最高 Lv.30。驯兽师击败首领必得 Boss 宝宝，宝宝即可出战，进阶至 1、3、5 阶分别变为幼年、成熟、觉醒形态。</p></div><button class="button" data-action="close">准备好了，继续冒险 ${icon('arrow')}</button>`);
 }
 function showOfflineReport() {
   if(!offlineReport) return;

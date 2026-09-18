@@ -6,15 +6,23 @@ export const STEP_MS = 950;
 export const MAX_OFFLINE_MS = 8 * 60 * 60 * 1000;
 export const REVIVE_MS = 10 * 60 * 1000;
 export const BOSS_DISCOVERY_KILLS = 12;
-export const JOURNEY_MIN_TICKS = 35;
-export const JOURNEY_MAX_TICKS = 65;
+export const JOURNEY_MIN_TICKS = 20;
+export const JOURNEY_MAX_TICKS = 22;
 export const JOURNEY_EVENT_CHANCE = .20;
 export const JOURNEY_EVENT_TICKS = 5;
-export const BEAST_REVIVE_MS = 60 * 60 * 1000;
+export const BEAST_REVIVE_MS = 10 * 60 * 1000;
+export const TAMER_SELF_DEFENSE_SCALE = .1;
 export const SUMMON_MS = STEP_MS * 3;
 export const BEAST_MAX_RANK = 20;
+export const BEAST_MAX_GROWTH = 5;
 export const BOSS_MATURE_GROWTH = 3;
-export const BOSS_MAX_GROWTH = 5;
+export const BOSS_MAX_GROWTH = BEAST_MAX_GROWTH;
+export const BOSS_FORMS = [
+  { id: 'baby', name: '宝宝形态', growth: 0, suffix: '宝宝', scale: .65 },
+  { id: 'young', name: '幼年形态', growth: 1, suffix: '幼兽', scale: .8 },
+  { id: 'mature', name: '成熟形态', growth: BOSS_MATURE_GROWTH, suffix: '', scale: 1 },
+  { id: 'awakened', name: '觉醒形态', growth: BOSS_MAX_GROWTH, suffix: '·觉醒', scale: 1.05 },
+];
 
 export const INGREDIENTS = [
   { id: 'salt', name: '海盐', color: '#d4dcd4', description: '让原味变得不再平凡。' },
@@ -115,13 +123,19 @@ export function gearMaterialCost(s, id) {
 }
 export const recipeCost = (s, id) => 15 + (s.recipes[id] || 0) * 15;
 
-export const beastName = id => MONSTERS[id]?.boss ? `${MONSTERS[id].name}宝宝` : MONSTERS[id]?.name || '未知契约兽';
+export const beastForm = beast => MONSTERS[beast?.id]?.boss ? BOSS_FORMS.findLast(form => beast.growth >= form.growth) : null;
+export function beastName(beast) {
+  if (typeof beast === 'string') beast = { id: beast, growth: 0 };
+  return `${MONSTERS[beast?.id]?.name || '未知契约兽'}${beastForm(beast)?.suffix || ''}`;
+}
 export const contractChance = s => Math.min(.5, .2 + stats(s).luck * .001);
 export const beastUpgradeCost = beast => 2 + beast.rank * 2;
-export const beastReady = beast => !!beast && beast.hp > 0 && !beast.reviveAt && (!MONSTERS[beast.id].boss || beast.growth >= BOSS_MATURE_GROWTH);
+export const beastLevelCap = beast => (beast.growth + 1) * 5;
+export const beastXpNeeded = level => 24 + level * 12;
+export const beastReady = beast => !!beast && beast.hp > 0 && !beast.reviveAt;
 export function beastStats(s, id) {
-  const beast = s.beasts[id], st = stats(stateForClass(s, 'tamer')), boss = !!MONSTERS[id].boss;
-  const scale = 1 + beast.rank * .12 + (boss ? beast.growth * .15 : 0);
+  const beast = s.beasts[id], st = stats(stateForClass(s, 'tamer'));
+  const scale = 1 + beast.rank * .12 + beast.growth * .15 + (beast.level - 1) * .06;
   const sturdy = ['mushroom', 'crab', 'pepper'].includes(MONSTERS[id].kind);
   return { attack: Math.round((st.attack * (sturdy ? .7 : .84) + 3) * scale), maxHp: Math.round((st.maxHp * (sturdy ? .8 : .6) + 15) * scale), defense: Math.round((st.defense * .7 + (sturdy ? 2 : .7)) * scale), speed: st.speed, crit: st.crit, dodge: st.dodge, lifesteal: st.lifesteal };
 }
@@ -135,16 +149,31 @@ export function bossFeedCost(id, growth) {
   }
   return cost;
 }
+export function beastAdvanceCost(id, growth) {
+  if (!Object.hasOwn(MONSTERS, id) || growth >= BEAST_MAX_GROWTH) return null;
+  if (MONSTERS[id].boss) return bossFeedCost(id, growth);
+  return { ore: 8 + growth * 6, thread: 6 + growth * 4, ...(growth > 0 ? { essence: growth * 2 } : {}) };
+}
+function gainBeastXp(s, beast, amount) {
+  if (!beastReady(beast) || beast.level >= beastLevelCap(beast)) return;
+  beast.xp += amount;
+  while (beast.level < beastLevelCap(beast) && beast.xp >= beastXpNeeded(beast.level)) {
+    beast.xp -= beastXpNeeded(beast.level); beast.level++;
+    addLog(s, `${beastName(beast)}升至 Lv.${beast.level}，攻击、生命上限和防御提升。${beast.level === beastLevelCap(beast) && beast.growth < BEAST_MAX_GROWTH ? '达到当前等级上限，可在营地消耗素材进阶。' : ''}`, 'level');
+  }
+  if (beast.level === beastLevelCap(beast)) beast.xp = 0;
+  s.beastRevision++;
+}
 function grantBeast(s, id) {
   if (s.beasts[id]) {
     const amount = MONSTERS[id].boss ? 5 : 1;
     s.beasts[id].crystals += amount;
-    addLog(s, `重复契约：${beastName(id)}晶体 +${amount}，可用于强化同种伙伴。`, 'loot');
+    addLog(s, `重复契约：${beastName(s.beasts[id])}晶体 +${amount}，可用于强化同种伙伴。`, 'loot');
   } else {
-    s.beasts[id] = { id, rank: 0, growth: 0, crystals: 0, hp: 1, reviveAt: 0 };
+    s.beasts[id] = { id, level: 1, xp: 0, rank: 0, growth: 0, crystals: 0, hp: 1, reviveAt: 0 };
     s.beasts[id].hp = beastStats(s, id).maxHp;
     s.preferredBeast ||= id;
-    addLog(s, MONSTERS[id].boss ? `获得${beastName(id)}！在契约兽营地喂养稀有素材，成长至 3 阶即可出战。` : `与${beastName(id)}签订契约，新的伙伴加入了！`, 'level');
+    addLog(s, MONSTERS[id].boss ? `获得${beastName(id)}！宝宝形态即可出战升级，达到等级上限后消耗素材进阶，逐步成长为幼年、成熟与觉醒形态。` : `与${beastName(id)}签订契约，新的伙伴加入了！出战可获得经验，达到等级上限后消耗素材进阶。`, 'level');
   }
   s.beastRevision++;
 }
@@ -164,7 +193,7 @@ function recoverBeasts(s, now) {
 export function preferBeast(s, id) {
   if (!Object.hasOwn(s.beasts, id)) return { ok: false, message: '尚未契约这只魔物。' };
   s.preferredBeast = id; s.beastRevision++;
-  return { ok: true, message: '已设为优先伙伴；下次召唤时优先选择，休养中或未长大的伙伴会自动跳过。' };
+  return { ok: true, message: '已设为优先伙伴；下次召唤时优先选择，休养中的伙伴会自动跳过，Boss 宝宝也可出战。' };
 }
 export function upgradeBeast(s, id) {
   const beast = Object.hasOwn(s.beasts, id) && s.beasts[id];
@@ -172,17 +201,20 @@ export function upgradeBeast(s, id) {
   const cost = beastUpgradeCost(beast);
   if (beast.crystals < cost) return { ok: false, message: `需要 ${cost} 枚同种晶体，重复契约这只魔物即可获得。` };
   beast.crystals -= cost; beast.rank++; s.beastRevision++;
-  return { ok: true, message: `${beastName(id)}强化至 +${beast.rank}，攻击、生命上限和防御提升。` };
+  return { ok: true, message: `${beastName(beast)}强化至 +${beast.rank}，攻击、生命上限和防御提升。` };
 }
 export function feedBeast(s, id) {
   const beast = Object.hasOwn(s.beasts, id) && s.beasts[id];
-  const cost = beast && bossFeedCost(id, beast.growth);
-  if (!cost) return { ok: false, message: '只有未满成长阶数的 Boss 宝宝可以喂养。' };
-  if (Object.entries(cost).some(([key, amount]) => s.materials[key] < amount)) return { ok: false, message: '稀有素材不足，击败首领或分解稀有装备继续收集。' };
+  const cost = beast && beastAdvanceCost(id, beast.growth);
+  if (!cost) return { ok: false, message: '没有这只契约兽，或已经达到最高阶。' };
+  if (beast.level < beastLevelCap(beast)) return { ok: false, message: `需要先通过战斗达到 Lv.${beastLevelCap(beast)}，才能消耗素材进阶。` };
+  if (Object.entries(cost).some(([key, amount]) => s.materials[key] < amount)) return { ok: false, message: '进阶素材不足，可通过探索、挑战首领或分解装备继续收集。' };
   for (const [key, amount] of Object.entries(cost)) s.materials[key] -= amount;
+  const previousForm = beastForm(beast);
   beast.growth++; s.beastRevision++;
   if (!beast.reviveAt && s.activeBeast !== id) beast.hp = beastStats(s, id).maxHp;
-  return { ok: true, message: `${beastName(id)}成长至 ${beast.growth} 阶！${beast.growth === BOSS_MATURE_GROWTH ? '已经可以召唤出战。' : '继续陪伴它成长吧。'}` };
+  const form = beastForm(beast);
+  return { ok: true, message: `${beastName(beast)}进阶至 ${beast.growth} 阶，等级上限提升至 Lv.${beastLevelCap(beast)}！${form !== previousForm ? `蜕变为${form.name}。` : '攻击、生命上限和防御提升。'}` };
 }
 
 function random(s) {
@@ -214,7 +246,7 @@ export function spawnEnemy(s) {
 }
 export function newGame(now = Date.now()) {
   const s = {
-    version: 6, lastTick: now, seed: 87651, level: 1, xp: 0, gold: 120, hp: 115,
+    version: 7, lastTick: now, seed: 87651, level: 1, xp: 0, gold: 120, hp: 115,
     heroClass: 'knight', zone: 0, unlockedZone: 0, wave: 0, lap: 0, kills: 0, totalIngredients: 0,
     inventory: Object.fromEntries(INGREDIENTS.map(i => [i.id, 0])), recipes: {},
     gear: { weapon: 0, shield: 0, charm: 0, ring: 0 }, running: true, speed: 1, autoTravel: true,
@@ -371,6 +403,7 @@ function defeatEnemy(s) {
   addLog(s, `击败${MONSTERS[enemy.id].name}，${INGREDIENTS.find(i => i.id === ingredient).name} +${quantity} · 金币 +${gold}`, 'loot');
   dropLoot(s, enemy.boss);
   if (s.heroClass === 'tamer') {
+    if (s.activeBeast) gainBeastXp(s, s.beasts[s.activeBeast], (enemy.boss ? 30 : 12) + s.zone * 8);
     if (enemy.boss || random(s) < contractChance(s)) grantBeast(s, enemy.id);
     if (s.activeBeast) {
       const beast = s.beasts[s.activeBeast], maxHp = beastStats(s, beast.id).maxHp;
@@ -528,7 +561,7 @@ function finishSummon(s) {
   s.activeBeast = nextBeast(s); s.summonCooldown = 0;
   if (s.activeBeast) {
     s.heroCooldown = STEP_MS; s.beastRevision++;
-    addLog(s, `召唤${beastName(s.activeBeast)}出战，伙伴会优先承受敌人的攻击。`, 'story');
+    addLog(s, `召唤${beastName(s.beasts[s.activeBeast])}出战，伙伴会优先承受敌人的攻击。`, 'story');
     emit(s, 'summon');
   }
 }
@@ -550,7 +583,7 @@ export function tick(s) {
   }
   // Summoning has its own clock. During the gap enemies keep attacking the tamer.
   let remaining = STEP_MS;
-  const attackClock = () => s.heroClass === 'tamer' && !s.activeBeast ? Infinity : s.heroCooldown;
+  const attackClock = () => s.heroClass === 'tamer' && !s.activeBeast && s.summonCooldown > 0 ? Infinity : s.heroCooldown;
   const summonClock = () => s.summonCooldown || Infinity;
   while (remaining >= Math.min(attackClock(), s.enemyCooldown, summonClock())) {
     const delta = Math.min(attackClock(), s.enemyCooldown, summonClock());
@@ -563,13 +596,14 @@ export function tick(s) {
     const beast = s.heroClass === 'tamer' && s.activeBeast ? s.beasts[s.activeBeast] : null;
     const st = beast ? beastStats(s, beast.id) : stats(s);
     if (attackClock() <= 0) {
-      const crit = random(s) < st.crit;
-      const damage = Math.min(s.enemy.hp, Math.round(st.attack * (.9 + random(s) * .2) * (crit ? 1.8 : 1)));
+      const selfDefense = s.heroClass === 'tamer' && !beast;
+      const crit = random(s) < st.crit && !selfDefense;
+      const damage = Math.min(s.enemy.hp, Math.max(1, Math.round(st.attack * (selfDefense ? TAMER_SELF_DEFENSE_SCALE : 1) * (.9 + random(s) * .2) * (crit ? 1.8 : 1))));
       s.enemy.hp -= damage;
       const healing = Math.round(damage * st.lifesteal);
       if (beast) beast.hp = Math.min(st.maxHp, beast.hp + healing);
       else s.hp = Math.min(st.maxHp, s.hp + healing + (s.heroClass === 'cleric' ? Math.ceil(st.maxHp * .045) : 0));
-      emit(s, beast ? 'beast' : 'hero', damage, { crit, healing });
+      emit(s, beast ? 'beast' : 'hero', damage, { crit, healing, selfDefense });
       s.heroCooldown = Math.round(STEP_MS * 2 * 100 / st.speed);
       if (!s.enemy.hp) { defeatEnemy(s); return; }
     } else {
@@ -580,7 +614,7 @@ export function tick(s) {
         if (!beast.hp) {
           beast.reviveAt = s.lastTick + BEAST_REVIVE_MS;
           s.activeBeast = null; s.beastRevision++;
-          addLog(s, `${beastName(beast.id)}倒下了，现实时间 1 小时后恢复。召唤期间花花会直接承受攻击。`, 'rest');
+          addLog(s, `${beastName(beast)}倒下了，现实时间 10 分钟后恢复。无可用伙伴时花花会用微弱攻击自保。`, 'rest');
           prepareSummon(s);
         }
       } else s.hp = Math.max(0, s.hp - damage);
@@ -731,7 +765,7 @@ export function serialize(s) { return JSON.stringify(s); }
 export function restore(raw, now = Date.now()) {
   try {
     const parsed = JSON.parse(raw);
-    if (!parsed || ![1, 2, 3, 4, 5, 6].includes(parsed.version) || !Number.isFinite(parsed.lastTick) || parsed.lastTick < 0 || !Number.isInteger(parsed.level) || parsed.level < 1 || parsed.level > 100000 || !Number.isInteger(parsed.zone) || !ZONES[parsed.zone]) return null;
+    if (!parsed || ![1, 2, 3, 4, 5, 6, 7].includes(parsed.version) || !Number.isFinite(parsed.lastTick) || parsed.lastTick < 0 || !Number.isInteger(parsed.level) || parsed.level < 1 || parsed.level > 100000 || !Number.isInteger(parsed.zone) || !ZONES[parsed.zone]) return null;
     const s = { ...newGame(now), ...parsed };
     if (parsed.version === 1) {
       s.gear = { ...s.gear, ring: 0 };
@@ -768,7 +802,8 @@ export function restore(raw, now = Date.now()) {
     for (const k of ['gold', 'xp', 'hp', 'kills', 'totalIngredients', 'lap', 'playedMs']) if (!Number.isSafeInteger(s[k]) || s[k] < 0) return null;
     if (s.xp >= xpNeeded(s.level) || !Number.isInteger(s.seed) || s.seed < 0 || s.seed > 4294967295 || typeof s.running !== 'boolean' || typeof s.autoTravel !== 'boolean' || typeof s.sound !== 'boolean') return null;
     if (![1, 2].includes(s.speed) || !['hero', 'enemy', 'travel', 'rest', 'event', 'task'].includes(s.phase) || !CLASSES.some(c => c.id === s.heroClass)) return null;
-    if (!Number.isInteger(s.wait) || s.wait < 0 || s.wait > JOURNEY_MAX_TICKS || (s.phase === 'event' && (s.wait < 1 || s.wait > JOURNEY_EVENT_TICKS)) || !Number.isSafeInteger(s.round) || s.round < 1) return null;
+    if (!Number.isInteger(s.wait) || s.wait < 0 || s.wait > (parsed.version < 7 ? 65 : JOURNEY_MAX_TICKS) || (s.phase === 'event' && (s.wait < 1 || s.wait > JOURNEY_EVENT_TICKS)) || !Number.isSafeInteger(s.round) || s.round < 1) return null;
+    if (parsed.version < 7) s.wait = Math.min(s.wait, JOURNEY_MAX_TICKS);
     if (!Number.isInteger(s.unlockedZone) || s.unlockedZone < s.zone || s.unlockedZone >= ZONES.length || !Number.isInteger(s.wave) || s.wave < 0 || s.wave > 5) return null;
     if (!s.enemy || !Object.hasOwn(MONSTERS,s.enemy.id) || !Number.isSafeInteger(s.enemy.hp) || !Number.isSafeInteger(s.enemy.maxHp) || !Number.isSafeInteger(s.enemy.attack) || s.enemy.hp < 0 || s.enemy.maxHp < 1 || s.enemy.hp > s.enemy.maxHp || s.enemy.attack < 1 || typeof s.enemy.boss !== 'boolean') return null;
     for (const { id } of EQUIPMENT_SLOTS) if (!Number.isInteger(s.gear?.[id]) || s.gear[id] < 0 || s.gear[id] > 100) return null;
@@ -777,7 +812,12 @@ export function restore(raw, now = Date.now()) {
     if (!record(s.professions) || Object.entries(s.professions).some(([id, p]) => id === s.heroClass || !CLASSES.some(c => c.id === id) || !record(p) || Object.keys(p).some(key => !CLASS_FIELDS.includes(key)) || !Number.isInteger(p.level) || p.level < 1 || p.level > 100000 || !nonnegative(p.xp) || p.xp >= xpNeeded(p.level) || !nonnegative(p.hp))) return null;
     if (s.fieldTask !== null) {
       const task = s.fieldTask;
-      if (!record(task) || !Object.hasOwn(FIELD_TASKS, task.kind) || !Number.isInteger(task.zone) || task.zone < 0 || task.zone > s.unlockedZone || !nonnegative(task.startedAt) || task.startedAt > s.lastTick || !nonnegative(task.finishAt) || task.finishAt !== task.startedAt + FIELD_TASKS[task.kind].duration || (task.completedAt !== null && task.completedAt !== task.finishAt)) return null;
+      if (!record(task) || !Object.hasOwn(FIELD_TASKS, task.kind) || !Number.isInteger(task.zone) || task.zone < 0 || task.zone > s.unlockedZone || !nonnegative(task.startedAt) || task.startedAt > s.lastTick || !nonnegative(task.finishAt) || (task.completedAt !== null && task.completedAt !== task.finishAt)) return null;
+      const legacyDuration = { quarry: 3, repair: 5, rescue: 10 }[task.kind] * 60000;
+      const duration = task.finishAt - task.startedAt;
+      // Completed tasks retain their historical dates and must never award twice.
+      if (duration !== (parsed.version < 7 ? legacyDuration : FIELD_TASKS[task.kind].duration) && !(task.completedAt !== null && duration === legacyDuration)) return null;
+      if (parsed.version < 7 && task.completedAt === null) task.finishAt = task.startedAt + FIELD_TASKS[task.kind].duration;
     }
     if ((s.phase === 'task') !== (s.fieldTask !== null && s.fieldTask.completedAt === null)) return null;
     if (!validSalvageRule(s.autoSalvage) || ['salvaged', 'inventoryRevision', 'journeyCount', 'shopRevision'].some(key => !nonnegative(s[key])) || !Number.isSafeInteger(s.nextFlyerId) || s.nextFlyerId < 1 || !Number.isSafeInteger(s.nextOrderId) || s.nextOrderId < 1) return null;
@@ -829,9 +869,13 @@ export function restore(raw, now = Date.now()) {
     if ([...ids].some(id => id >= s.nextItemId)) return null;
     if (!record(s.beasts) || !nonnegative(s.beastRevision) || !nonnegative(s.summonCooldown) || s.summonCooldown > SUMMON_MS) return null;
     for (const [id, beast] of Object.entries(s.beasts)) {
-      if (!Object.hasOwn(MONSTERS, id) || !record(beast) || beast.id !== id || !nonnegative(beast.rank) || beast.rank > BEAST_MAX_RANK || !nonnegative(beast.growth) || beast.growth > BOSS_MAX_GROWTH || (!MONSTERS[id].boss && beast.growth !== 0) || !nonnegative(beast.crystals) || !nonnegative(beast.hp) || !nonnegative(beast.reviveAt)) return null;
+      if (!Object.hasOwn(MONSTERS, id) || !record(beast) || beast.id !== id || !nonnegative(beast.rank) || beast.rank > BEAST_MAX_RANK || !nonnegative(beast.growth) || beast.growth > BEAST_MAX_GROWTH || (parsed.version < 7 && !MONSTERS[id].boss && beast.growth !== 0) || !nonnegative(beast.crystals) || !nonnegative(beast.hp) || !nonnegative(beast.reviveAt)) return null;
+      if (parsed.version < 7) { beast.level = 1; beast.xp = 0; }
+      if (!Number.isInteger(beast.level) || beast.level < 1 || beast.level > beastLevelCap(beast) || !nonnegative(beast.xp) || beast.xp >= beastXpNeeded(beast.level) || (beast.level === beastLevelCap(beast) && beast.xp !== 0)) return null;
       if (parsed.version < 6) beast.hp = Math.min(beast.hp, beastStats(s, id).maxHp);
-      if (beast.hp > beastStats(s, id).maxHp || (beast.reviveAt ? beast.hp !== 0 || beast.reviveAt > s.lastTick + BEAST_REVIVE_MS : beast.hp === 0)) return null;
+      const recoveryMs = parsed.version < 7 ? 60 * 60 * 1000 : BEAST_REVIVE_MS;
+      if (beast.hp > beastStats(s, id).maxHp || (beast.reviveAt ? beast.hp !== 0 || beast.reviveAt > s.lastTick + recoveryMs : beast.hp === 0)) return null;
+      if (parsed.version < 7 && beast.reviveAt) beast.reviveAt = Math.max(1, beast.reviveAt - recoveryMs + BEAST_REVIVE_MS);
     }
     if (s.preferredBeast !== null && !Object.hasOwn(s.beasts, s.preferredBeast)) return null;
     if (s.activeBeast !== null && (!Object.hasOwn(s.beasts, s.activeBeast) || !beastReady(s.beasts[s.activeBeast]) || s.summonCooldown > 0)) return null;
@@ -843,6 +887,7 @@ export function restore(raw, now = Date.now()) {
     s.recipes = Object.fromEntries(RECIPES.filter(r => s.recipes[r.id] !== undefined).map(r => [r.id,s.recipes[r.id]]));
     s.logs = s.logs.filter(x => typeof x?.text === 'string' && Number.isFinite(x.time)).slice(0, 45).map(x => ({ text:x.text.slice(0,300), time:x.time, type:['normal','boss','story','level','loot','rest'].includes(x.type) ? x.type : 'normal' }));
     if (!s.event || !Number.isSafeInteger(s.event.id) || s.event.id < 0) s.event = { id:0, type:'spawn' };
+    s.version = 7;
     s.lastTick = Math.min(s.lastTick, now);
     return s;
   } catch { return null; }

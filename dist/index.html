@@ -42,6 +42,8 @@
 @media(max-width:440px){.beast-grid{grid-template-columns:1fr}.beast-banner>div:first-child{align-items:flex-start}.beast-banner canvas{width:52px;height:65px}}
 
 .class-progress{font-size:10px;line-height:1.9;color:#8a9778;text-align:left;margin:9px 0 16px;padding:10px;background:#eef0df;border-radius:4px}.class-card h3 small{font-size:11px;color:#97a17e;margin-left:5px}.class-switch-note{font-size:11px;color:#929a83;line-height:1.9;margin:-8px 0 20px}.unequip-button{font-size:9px;margin-top:13px}.field-task{background:#eee9d8;border-color:#dacfaa}.field-task b{color:#8a784d}.field-task .notice-emblem{color:#a18d56;border-color:#dacfaa;background:#faf3de}.task-progress{height:5px;border-radius:3px;background:#ddd8bf;overflow:hidden;margin-top:12px}.task-progress>i{display:block;height:100%;background:#aaae74;transition:width .3s}.field-task strong{font-family:Consolas,monospace;color:#8d774b}.task-complete{background:#eaf0df;border-color:#cddabc}.task-complete b{color:#6e865a}
+
+.beast-level{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:14px 0 8px}.beast-level>b{font:16px Consolas,monospace;color:#7d8e5c;white-space:nowrap}.beast-level small{font-size:11px;color:#a4ab8a}.beast-level>span{font-size:10px;color:#969c80;line-height:1.7}.beast-xp{height:4px;margin-bottom:15px}.beast-xp>i{background:#c4ad73}.beast-form-track{display:flex;gap:5px;margin:14px 0}.beast-form-track>span{flex:1;text-align:center;padding:7px 3px;border:1px solid #e7dfca;border-radius:4px;color:#aba68f;font-size:10px}.beast-form-track small{display:block;font-size:9px;margin-top:4px}.beast-form-track .reached{color:#929d73;background:#f2f1de}.beast-form-track .current{color:#8b7546;background:#f0e5c7;border-color:#cdb17a}
 </style>
   </head>
   <body>
@@ -120,9 +122,9 @@ function craftingCost(s, blueprint) {
 }
 
 const FIELD_TASKS = {
-  quarry: { name: '采集晶矿', duration: 3 * 60000, icon: 'spark', description: '小径旁露出一簇晶矿，花花停下来慢慢开采。', materials: { ore: 6, thread: 2 }, gold: 0 },
+  quarry: { name: '采集晶矿', duration: 5 * 60000, icon: 'spark', description: '小径旁露出一簇晶矿，花花停下来慢慢开采。', materials: { ore: 6, thread: 2 }, gold: 0 },
   repair: { name: '修复林间营地', duration: 5 * 60000, icon: 'shield', description: '修补风雨中的营地，旅人会留下谢礼。', materials: { ore: 3, thread: 6 }, gold: 45 },
-  rescue: { name: '照料迷途精灵', duration: 10 * 60000, icon: 'heart', description: '为受伤的精灵包扎，守候它慢慢恢复精神。', materials: { essence: 2, thread: 4 }, gold: 0 },
+  rescue: { name: '照料迷途精灵', duration: 5 * 60000, icon: 'heart', description: '为受伤的精灵包扎，守候它慢慢恢复精神。', materials: { essence: 2, thread: 4 }, gold: 0 },
 };
 function fieldTaskRewards(task) {
   const definition = FIELD_TASKS[task.kind];
@@ -172,15 +174,23 @@ const STEP_MS = 950;
 const MAX_OFFLINE_MS = 8 * 60 * 60 * 1000;
 const REVIVE_MS = 10 * 60 * 1000;
 const BOSS_DISCOVERY_KILLS = 12;
-const JOURNEY_MIN_TICKS = 35;
-const JOURNEY_MAX_TICKS = 65;
+const JOURNEY_MIN_TICKS = 20;
+const JOURNEY_MAX_TICKS = 22;
 const JOURNEY_EVENT_CHANCE = .20;
 const JOURNEY_EVENT_TICKS = 5;
-const BEAST_REVIVE_MS = 60 * 60 * 1000;
+const BEAST_REVIVE_MS = 10 * 60 * 1000;
+const TAMER_SELF_DEFENSE_SCALE = .1;
 const SUMMON_MS = STEP_MS * 3;
 const BEAST_MAX_RANK = 20;
+const BEAST_MAX_GROWTH = 5;
 const BOSS_MATURE_GROWTH = 3;
-const BOSS_MAX_GROWTH = 5;
+const BOSS_MAX_GROWTH = BEAST_MAX_GROWTH;
+const BOSS_FORMS = [
+  { id: 'baby', name: '宝宝形态', growth: 0, suffix: '宝宝', scale: .65 },
+  { id: 'young', name: '幼年形态', growth: 1, suffix: '幼兽', scale: .8 },
+  { id: 'mature', name: '成熟形态', growth: BOSS_MATURE_GROWTH, suffix: '', scale: 1 },
+  { id: 'awakened', name: '觉醒形态', growth: BOSS_MAX_GROWTH, suffix: '·觉醒', scale: 1.05 },
+];
 
 const INGREDIENTS = [
   { id: 'salt', name: '海盐', color: '#d4dcd4', description: '让原味变得不再平凡。' },
@@ -281,13 +291,19 @@ function gearMaterialCost(s, id) {
 }
 const recipeCost = (s, id) => 15 + (s.recipes[id] || 0) * 15;
 
-const beastName = id => MONSTERS[id]?.boss ? `${MONSTERS[id].name}宝宝` : MONSTERS[id]?.name || '未知契约兽';
+const beastForm = beast => MONSTERS[beast?.id]?.boss ? BOSS_FORMS.findLast(form => beast.growth >= form.growth) : null;
+function beastName(beast) {
+  if (typeof beast === 'string') beast = { id: beast, growth: 0 };
+  return `${MONSTERS[beast?.id]?.name || '未知契约兽'}${beastForm(beast)?.suffix || ''}`;
+}
 const contractChance = s => Math.min(.5, .2 + stats(s).luck * .001);
 const beastUpgradeCost = beast => 2 + beast.rank * 2;
-const beastReady = beast => !!beast && beast.hp > 0 && !beast.reviveAt && (!MONSTERS[beast.id].boss || beast.growth >= BOSS_MATURE_GROWTH);
+const beastLevelCap = beast => (beast.growth + 1) * 5;
+const beastXpNeeded = level => 24 + level * 12;
+const beastReady = beast => !!beast && beast.hp > 0 && !beast.reviveAt;
 function beastStats(s, id) {
-  const beast = s.beasts[id], st = stats(stateForClass(s, 'tamer')), boss = !!MONSTERS[id].boss;
-  const scale = 1 + beast.rank * .12 + (boss ? beast.growth * .15 : 0);
+  const beast = s.beasts[id], st = stats(stateForClass(s, 'tamer'));
+  const scale = 1 + beast.rank * .12 + beast.growth * .15 + (beast.level - 1) * .06;
   const sturdy = ['mushroom', 'crab', 'pepper'].includes(MONSTERS[id].kind);
   return { attack: Math.round((st.attack * (sturdy ? .7 : .84) + 3) * scale), maxHp: Math.round((st.maxHp * (sturdy ? .8 : .6) + 15) * scale), defense: Math.round((st.defense * .7 + (sturdy ? 2 : .7)) * scale), speed: st.speed, crit: st.crit, dodge: st.dodge, lifesteal: st.lifesteal };
 }
@@ -301,16 +317,31 @@ function bossFeedCost(id, growth) {
   }
   return cost;
 }
+function beastAdvanceCost(id, growth) {
+  if (!Object.hasOwn(MONSTERS, id) || growth >= BEAST_MAX_GROWTH) return null;
+  if (MONSTERS[id].boss) return bossFeedCost(id, growth);
+  return { ore: 8 + growth * 6, thread: 6 + growth * 4, ...(growth > 0 ? { essence: growth * 2 } : {}) };
+}
+function gainBeastXp(s, beast, amount) {
+  if (!beastReady(beast) || beast.level >= beastLevelCap(beast)) return;
+  beast.xp += amount;
+  while (beast.level < beastLevelCap(beast) && beast.xp >= beastXpNeeded(beast.level)) {
+    beast.xp -= beastXpNeeded(beast.level); beast.level++;
+    addLog(s, `${beastName(beast)}升至 Lv.${beast.level}，攻击、生命上限和防御提升。${beast.level === beastLevelCap(beast) && beast.growth < BEAST_MAX_GROWTH ? '达到当前等级上限，可在营地消耗素材进阶。' : ''}`, 'level');
+  }
+  if (beast.level === beastLevelCap(beast)) beast.xp = 0;
+  s.beastRevision++;
+}
 function grantBeast(s, id) {
   if (s.beasts[id]) {
     const amount = MONSTERS[id].boss ? 5 : 1;
     s.beasts[id].crystals += amount;
-    addLog(s, `重复契约：${beastName(id)}晶体 +${amount}，可用于强化同种伙伴。`, 'loot');
+    addLog(s, `重复契约：${beastName(s.beasts[id])}晶体 +${amount}，可用于强化同种伙伴。`, 'loot');
   } else {
-    s.beasts[id] = { id, rank: 0, growth: 0, crystals: 0, hp: 1, reviveAt: 0 };
+    s.beasts[id] = { id, level: 1, xp: 0, rank: 0, growth: 0, crystals: 0, hp: 1, reviveAt: 0 };
     s.beasts[id].hp = beastStats(s, id).maxHp;
     s.preferredBeast ||= id;
-    addLog(s, MONSTERS[id].boss ? `获得${beastName(id)}！在契约兽营地喂养稀有素材，成长至 3 阶即可出战。` : `与${beastName(id)}签订契约，新的伙伴加入了！`, 'level');
+    addLog(s, MONSTERS[id].boss ? `获得${beastName(id)}！宝宝形态即可出战升级，达到等级上限后消耗素材进阶，逐步成长为幼年、成熟与觉醒形态。` : `与${beastName(id)}签订契约，新的伙伴加入了！出战可获得经验，达到等级上限后消耗素材进阶。`, 'level');
   }
   s.beastRevision++;
 }
@@ -330,7 +361,7 @@ function recoverBeasts(s, now) {
 function preferBeast(s, id) {
   if (!Object.hasOwn(s.beasts, id)) return { ok: false, message: '尚未契约这只魔物。' };
   s.preferredBeast = id; s.beastRevision++;
-  return { ok: true, message: '已设为优先伙伴；下次召唤时优先选择，休养中或未长大的伙伴会自动跳过。' };
+  return { ok: true, message: '已设为优先伙伴；下次召唤时优先选择，休养中的伙伴会自动跳过，Boss 宝宝也可出战。' };
 }
 function upgradeBeast(s, id) {
   const beast = Object.hasOwn(s.beasts, id) && s.beasts[id];
@@ -338,17 +369,20 @@ function upgradeBeast(s, id) {
   const cost = beastUpgradeCost(beast);
   if (beast.crystals < cost) return { ok: false, message: `需要 ${cost} 枚同种晶体，重复契约这只魔物即可获得。` };
   beast.crystals -= cost; beast.rank++; s.beastRevision++;
-  return { ok: true, message: `${beastName(id)}强化至 +${beast.rank}，攻击、生命上限和防御提升。` };
+  return { ok: true, message: `${beastName(beast)}强化至 +${beast.rank}，攻击、生命上限和防御提升。` };
 }
 function feedBeast(s, id) {
   const beast = Object.hasOwn(s.beasts, id) && s.beasts[id];
-  const cost = beast && bossFeedCost(id, beast.growth);
-  if (!cost) return { ok: false, message: '只有未满成长阶数的 Boss 宝宝可以喂养。' };
-  if (Object.entries(cost).some(([key, amount]) => s.materials[key] < amount)) return { ok: false, message: '稀有素材不足，击败首领或分解稀有装备继续收集。' };
+  const cost = beast && beastAdvanceCost(id, beast.growth);
+  if (!cost) return { ok: false, message: '没有这只契约兽，或已经达到最高阶。' };
+  if (beast.level < beastLevelCap(beast)) return { ok: false, message: `需要先通过战斗达到 Lv.${beastLevelCap(beast)}，才能消耗素材进阶。` };
+  if (Object.entries(cost).some(([key, amount]) => s.materials[key] < amount)) return { ok: false, message: '进阶素材不足，可通过探索、挑战首领或分解装备继续收集。' };
   for (const [key, amount] of Object.entries(cost)) s.materials[key] -= amount;
+  const previousForm = beastForm(beast);
   beast.growth++; s.beastRevision++;
   if (!beast.reviveAt && s.activeBeast !== id) beast.hp = beastStats(s, id).maxHp;
-  return { ok: true, message: `${beastName(id)}成长至 ${beast.growth} 阶！${beast.growth === BOSS_MATURE_GROWTH ? '已经可以召唤出战。' : '继续陪伴它成长吧。'}` };
+  const form = beastForm(beast);
+  return { ok: true, message: `${beastName(beast)}进阶至 ${beast.growth} 阶，等级上限提升至 Lv.${beastLevelCap(beast)}！${form !== previousForm ? `蜕变为${form.name}。` : '攻击、生命上限和防御提升。'}` };
 }
 
 function random(s) {
@@ -380,7 +414,7 @@ function spawnEnemy(s) {
 }
 function newGame(now = Date.now()) {
   const s = {
-    version: 6, lastTick: now, seed: 87651, level: 1, xp: 0, gold: 120, hp: 115,
+    version: 7, lastTick: now, seed: 87651, level: 1, xp: 0, gold: 120, hp: 115,
     heroClass: 'knight', zone: 0, unlockedZone: 0, wave: 0, lap: 0, kills: 0, totalIngredients: 0,
     inventory: Object.fromEntries(INGREDIENTS.map(i => [i.id, 0])), recipes: {},
     gear: { weapon: 0, shield: 0, charm: 0, ring: 0 }, running: true, speed: 1, autoTravel: true,
@@ -537,6 +571,7 @@ function defeatEnemy(s) {
   addLog(s, `击败${MONSTERS[enemy.id].name}，${INGREDIENTS.find(i => i.id === ingredient).name} +${quantity} · 金币 +${gold}`, 'loot');
   dropLoot(s, enemy.boss);
   if (s.heroClass === 'tamer') {
+    if (s.activeBeast) gainBeastXp(s, s.beasts[s.activeBeast], (enemy.boss ? 30 : 12) + s.zone * 8);
     if (enemy.boss || random(s) < contractChance(s)) grantBeast(s, enemy.id);
     if (s.activeBeast) {
       const beast = s.beasts[s.activeBeast], maxHp = beastStats(s, beast.id).maxHp;
@@ -694,7 +729,7 @@ function finishSummon(s) {
   s.activeBeast = nextBeast(s); s.summonCooldown = 0;
   if (s.activeBeast) {
     s.heroCooldown = STEP_MS; s.beastRevision++;
-    addLog(s, `召唤${beastName(s.activeBeast)}出战，伙伴会优先承受敌人的攻击。`, 'story');
+    addLog(s, `召唤${beastName(s.beasts[s.activeBeast])}出战，伙伴会优先承受敌人的攻击。`, 'story');
     emit(s, 'summon');
   }
 }
@@ -716,7 +751,7 @@ function tick(s) {
   }
   // Summoning has its own clock. During the gap enemies keep attacking the tamer.
   let remaining = STEP_MS;
-  const attackClock = () => s.heroClass === 'tamer' && !s.activeBeast ? Infinity : s.heroCooldown;
+  const attackClock = () => s.heroClass === 'tamer' && !s.activeBeast && s.summonCooldown > 0 ? Infinity : s.heroCooldown;
   const summonClock = () => s.summonCooldown || Infinity;
   while (remaining >= Math.min(attackClock(), s.enemyCooldown, summonClock())) {
     const delta = Math.min(attackClock(), s.enemyCooldown, summonClock());
@@ -729,13 +764,14 @@ function tick(s) {
     const beast = s.heroClass === 'tamer' && s.activeBeast ? s.beasts[s.activeBeast] : null;
     const st = beast ? beastStats(s, beast.id) : stats(s);
     if (attackClock() <= 0) {
-      const crit = random(s) < st.crit;
-      const damage = Math.min(s.enemy.hp, Math.round(st.attack * (.9 + random(s) * .2) * (crit ? 1.8 : 1)));
+      const selfDefense = s.heroClass === 'tamer' && !beast;
+      const crit = random(s) < st.crit && !selfDefense;
+      const damage = Math.min(s.enemy.hp, Math.max(1, Math.round(st.attack * (selfDefense ? TAMER_SELF_DEFENSE_SCALE : 1) * (.9 + random(s) * .2) * (crit ? 1.8 : 1))));
       s.enemy.hp -= damage;
       const healing = Math.round(damage * st.lifesteal);
       if (beast) beast.hp = Math.min(st.maxHp, beast.hp + healing);
       else s.hp = Math.min(st.maxHp, s.hp + healing + (s.heroClass === 'cleric' ? Math.ceil(st.maxHp * .045) : 0));
-      emit(s, beast ? 'beast' : 'hero', damage, { crit, healing });
+      emit(s, beast ? 'beast' : 'hero', damage, { crit, healing, selfDefense });
       s.heroCooldown = Math.round(STEP_MS * 2 * 100 / st.speed);
       if (!s.enemy.hp) { defeatEnemy(s); return; }
     } else {
@@ -746,7 +782,7 @@ function tick(s) {
         if (!beast.hp) {
           beast.reviveAt = s.lastTick + BEAST_REVIVE_MS;
           s.activeBeast = null; s.beastRevision++;
-          addLog(s, `${beastName(beast.id)}倒下了，现实时间 1 小时后恢复。召唤期间花花会直接承受攻击。`, 'rest');
+          addLog(s, `${beastName(beast)}倒下了，现实时间 10 分钟后恢复。无可用伙伴时花花会用微弱攻击自保。`, 'rest');
           prepareSummon(s);
         }
       } else s.hp = Math.max(0, s.hp - damage);
@@ -897,7 +933,7 @@ function serialize(s) { return JSON.stringify(s); }
 function restore(raw, now = Date.now()) {
   try {
     const parsed = JSON.parse(raw);
-    if (!parsed || ![1, 2, 3, 4, 5, 6].includes(parsed.version) || !Number.isFinite(parsed.lastTick) || parsed.lastTick < 0 || !Number.isInteger(parsed.level) || parsed.level < 1 || parsed.level > 100000 || !Number.isInteger(parsed.zone) || !ZONES[parsed.zone]) return null;
+    if (!parsed || ![1, 2, 3, 4, 5, 6, 7].includes(parsed.version) || !Number.isFinite(parsed.lastTick) || parsed.lastTick < 0 || !Number.isInteger(parsed.level) || parsed.level < 1 || parsed.level > 100000 || !Number.isInteger(parsed.zone) || !ZONES[parsed.zone]) return null;
     const s = { ...newGame(now), ...parsed };
     if (parsed.version === 1) {
       s.gear = { ...s.gear, ring: 0 };
@@ -934,7 +970,8 @@ function restore(raw, now = Date.now()) {
     for (const k of ['gold', 'xp', 'hp', 'kills', 'totalIngredients', 'lap', 'playedMs']) if (!Number.isSafeInteger(s[k]) || s[k] < 0) return null;
     if (s.xp >= xpNeeded(s.level) || !Number.isInteger(s.seed) || s.seed < 0 || s.seed > 4294967295 || typeof s.running !== 'boolean' || typeof s.autoTravel !== 'boolean' || typeof s.sound !== 'boolean') return null;
     if (![1, 2].includes(s.speed) || !['hero', 'enemy', 'travel', 'rest', 'event', 'task'].includes(s.phase) || !CLASSES.some(c => c.id === s.heroClass)) return null;
-    if (!Number.isInteger(s.wait) || s.wait < 0 || s.wait > JOURNEY_MAX_TICKS || (s.phase === 'event' && (s.wait < 1 || s.wait > JOURNEY_EVENT_TICKS)) || !Number.isSafeInteger(s.round) || s.round < 1) return null;
+    if (!Number.isInteger(s.wait) || s.wait < 0 || s.wait > (parsed.version < 7 ? 65 : JOURNEY_MAX_TICKS) || (s.phase === 'event' && (s.wait < 1 || s.wait > JOURNEY_EVENT_TICKS)) || !Number.isSafeInteger(s.round) || s.round < 1) return null;
+    if (parsed.version < 7) s.wait = Math.min(s.wait, JOURNEY_MAX_TICKS);
     if (!Number.isInteger(s.unlockedZone) || s.unlockedZone < s.zone || s.unlockedZone >= ZONES.length || !Number.isInteger(s.wave) || s.wave < 0 || s.wave > 5) return null;
     if (!s.enemy || !Object.hasOwn(MONSTERS,s.enemy.id) || !Number.isSafeInteger(s.enemy.hp) || !Number.isSafeInteger(s.enemy.maxHp) || !Number.isSafeInteger(s.enemy.attack) || s.enemy.hp < 0 || s.enemy.maxHp < 1 || s.enemy.hp > s.enemy.maxHp || s.enemy.attack < 1 || typeof s.enemy.boss !== 'boolean') return null;
     for (const { id } of EQUIPMENT_SLOTS) if (!Number.isInteger(s.gear?.[id]) || s.gear[id] < 0 || s.gear[id] > 100) return null;
@@ -943,7 +980,12 @@ function restore(raw, now = Date.now()) {
     if (!record(s.professions) || Object.entries(s.professions).some(([id, p]) => id === s.heroClass || !CLASSES.some(c => c.id === id) || !record(p) || Object.keys(p).some(key => !CLASS_FIELDS.includes(key)) || !Number.isInteger(p.level) || p.level < 1 || p.level > 100000 || !nonnegative(p.xp) || p.xp >= xpNeeded(p.level) || !nonnegative(p.hp))) return null;
     if (s.fieldTask !== null) {
       const task = s.fieldTask;
-      if (!record(task) || !Object.hasOwn(FIELD_TASKS, task.kind) || !Number.isInteger(task.zone) || task.zone < 0 || task.zone > s.unlockedZone || !nonnegative(task.startedAt) || task.startedAt > s.lastTick || !nonnegative(task.finishAt) || task.finishAt !== task.startedAt + FIELD_TASKS[task.kind].duration || (task.completedAt !== null && task.completedAt !== task.finishAt)) return null;
+      if (!record(task) || !Object.hasOwn(FIELD_TASKS, task.kind) || !Number.isInteger(task.zone) || task.zone < 0 || task.zone > s.unlockedZone || !nonnegative(task.startedAt) || task.startedAt > s.lastTick || !nonnegative(task.finishAt) || (task.completedAt !== null && task.completedAt !== task.finishAt)) return null;
+      const legacyDuration = { quarry: 3, repair: 5, rescue: 10 }[task.kind] * 60000;
+      const duration = task.finishAt - task.startedAt;
+      // Completed tasks retain their historical dates and must never award twice.
+      if (duration !== (parsed.version < 7 ? legacyDuration : FIELD_TASKS[task.kind].duration) && !(task.completedAt !== null && duration === legacyDuration)) return null;
+      if (parsed.version < 7 && task.completedAt === null) task.finishAt = task.startedAt + FIELD_TASKS[task.kind].duration;
     }
     if ((s.phase === 'task') !== (s.fieldTask !== null && s.fieldTask.completedAt === null)) return null;
     if (!validSalvageRule(s.autoSalvage) || ['salvaged', 'inventoryRevision', 'journeyCount', 'shopRevision'].some(key => !nonnegative(s[key])) || !Number.isSafeInteger(s.nextFlyerId) || s.nextFlyerId < 1 || !Number.isSafeInteger(s.nextOrderId) || s.nextOrderId < 1) return null;
@@ -995,9 +1037,13 @@ function restore(raw, now = Date.now()) {
     if ([...ids].some(id => id >= s.nextItemId)) return null;
     if (!record(s.beasts) || !nonnegative(s.beastRevision) || !nonnegative(s.summonCooldown) || s.summonCooldown > SUMMON_MS) return null;
     for (const [id, beast] of Object.entries(s.beasts)) {
-      if (!Object.hasOwn(MONSTERS, id) || !record(beast) || beast.id !== id || !nonnegative(beast.rank) || beast.rank > BEAST_MAX_RANK || !nonnegative(beast.growth) || beast.growth > BOSS_MAX_GROWTH || (!MONSTERS[id].boss && beast.growth !== 0) || !nonnegative(beast.crystals) || !nonnegative(beast.hp) || !nonnegative(beast.reviveAt)) return null;
+      if (!Object.hasOwn(MONSTERS, id) || !record(beast) || beast.id !== id || !nonnegative(beast.rank) || beast.rank > BEAST_MAX_RANK || !nonnegative(beast.growth) || beast.growth > BEAST_MAX_GROWTH || (parsed.version < 7 && !MONSTERS[id].boss && beast.growth !== 0) || !nonnegative(beast.crystals) || !nonnegative(beast.hp) || !nonnegative(beast.reviveAt)) return null;
+      if (parsed.version < 7) { beast.level = 1; beast.xp = 0; }
+      if (!Number.isInteger(beast.level) || beast.level < 1 || beast.level > beastLevelCap(beast) || !nonnegative(beast.xp) || beast.xp >= beastXpNeeded(beast.level) || (beast.level === beastLevelCap(beast) && beast.xp !== 0)) return null;
       if (parsed.version < 6) beast.hp = Math.min(beast.hp, beastStats(s, id).maxHp);
-      if (beast.hp > beastStats(s, id).maxHp || (beast.reviveAt ? beast.hp !== 0 || beast.reviveAt > s.lastTick + BEAST_REVIVE_MS : beast.hp === 0)) return null;
+      const recoveryMs = parsed.version < 7 ? 60 * 60 * 1000 : BEAST_REVIVE_MS;
+      if (beast.hp > beastStats(s, id).maxHp || (beast.reviveAt ? beast.hp !== 0 || beast.reviveAt > s.lastTick + recoveryMs : beast.hp === 0)) return null;
+      if (parsed.version < 7 && beast.reviveAt) beast.reviveAt = Math.max(1, beast.reviveAt - recoveryMs + BEAST_REVIVE_MS);
     }
     if (s.preferredBeast !== null && !Object.hasOwn(s.beasts, s.preferredBeast)) return null;
     if (s.activeBeast !== null && (!Object.hasOwn(s.beasts, s.activeBeast) || !beastReady(s.beasts[s.activeBeast]) || s.summonCooldown > 0)) return null;
@@ -1009,6 +1055,7 @@ function restore(raw, now = Date.now()) {
     s.recipes = Object.fromEntries(RECIPES.filter(r => s.recipes[r.id] !== undefined).map(r => [r.id,s.recipes[r.id]]));
     s.logs = s.logs.filter(x => typeof x?.text === 'string' && Number.isFinite(x.time)).slice(0, 45).map(x => ({ text:x.text.slice(0,300), time:x.time, type:['normal','boss','story','level','loot','rest'].includes(x.type) ? x.type : 'normal' }));
     if (!s.event || !Number.isSafeInteger(s.event.id) || s.event.id < 0) s.event = { id:0, type:'spawn' };
+    s.version = 7;
     s.lastTick = Math.min(s.lastTick, now);
     return s;
   } catch { return null; }
@@ -1122,6 +1169,28 @@ function drawMonster(ctx, x, y, scale = 3, kind = 'mushroom', frame = 0, boss = 
   }
   if (boss) {
     r(-8,-34,17,4,'#bd9049'); r(-8,-38,3,5,'#edce6d'); r(-1,-40,3,7,'#edce6d'); r(6,-38,3,5,'#edce6d'); r(-6,-34,13,2,'#ffe7a1');
+  }
+  ctx.restore();
+}
+
+function drawBeast(ctx, x, y, scale, beast, frame = 0) {
+  const monster = MONSTERS[beast.id], form = beastForm(beast);
+  if (!form) { drawMonster(ctx, x, y, scale, monster.kind, frame); return; }
+  ctx.save(); ctx.translate(Math.round(x), Math.round(y)); ctx.scale(scale * form.scale, scale * form.scale);
+  if (form.id === 'awakened') {
+    for (const side of [-1, 1]) {
+      polygon(ctx, [[side*9,-7],[side*23,-20],[side*26,-33],[side*16,-24],[side*10,-27]], '#d9c47c');
+      box(ctx, side*24-1, -39-frame*2, 3, 3, '#fff0b6');
+    }
+  }
+  drawMonster(ctx, 0, 0, 1, monster.kind, frame, ['mature', 'awakened'].includes(form.id));
+  if (form.id === 'baby') {
+    box(ctx, -4, -5+ (frame ? -1 : 0), 9, 3, '#f2d8a0');
+    box(ctx, -1, -5+ (frame ? -1 : 0), 3, 2, '#d5a770');
+  } else if (form.id === 'young') {
+    box(ctx, -7, -7, 14, 3, '#89ac80'); box(ctx, 5, -6, 4, 8, '#6c966e');
+  } else if (form.id === 'awakened') {
+    box(ctx, -1, -37, 3, 4, '#b1d6c4'); box(ctx, -2, -43-frame, 5, 2, '#fff0b6');
   }
   ctx.restore();
 }
@@ -1265,10 +1334,10 @@ function drawScene(canvas, s, time = 0, visual = {}) {
     const maxHp=beastStats(s,pet.id).maxHp;
     ctx.globalAlpha=.18;box(ctx,px-17,141,34,4,'#283d2e');ctx.globalAlpha=1;
     if(visual.type==='beast-hit'&&kick>.9)ctx.globalAlpha=.55;
-    drawMonster(ctx,px,142,1.35,MONSTERS[pet.id].kind,frame,!!MONSTERS[pet.id].boss);
+    drawBeast(ctx,px,142,MONSTERS[pet.id].boss?1.05:1.35,pet,frame);
     ctx.globalAlpha=1;
     box(ctx,px-17,93,34,3,'#4c6758');box(ctx,px-17,93,34*pet.hp/maxHp,3,'#b8d68d');
-    ctx.fillStyle='#e4efc9';ctx.font='7px sans-serif';ctx.textAlign='center';ctx.fillText('契约伙伴',px,88);
+    ctx.fillStyle='#e4efc9';ctx.font='7px sans-serif';ctx.textAlign='center';ctx.fillText(beastForm(pet)?.name || '契约伙伴',px,88);
   } else if(s.heroClass==='tamer'&&s.summonCooldown&&s.phase!=='rest') {
     ctx.strokeStyle='#d2deb0';ctx.lineWidth=1;ctx.beginPath();ctx.ellipse(202,138,19,5,0,0,Math.PI*2);ctx.stroke();
     ctx.fillStyle='#e4efc9';ctx.font='7px sans-serif';ctx.textAlign='center';ctx.fillText('召唤中…',202,117);
@@ -1342,6 +1411,7 @@ function paintArt(root=document) {
     ctx.clearRect(0,0,canvas.width,canvas.height);ctx.imageSmoothingEnabled=false;
     if(kind==='hero') drawHero(ctx,canvas.width/2,canvas.height*.84,Number(canvas.dataset.scale || 3),canvas.dataset.kind || 'knight');
     else if(kind==='ingredient') drawIngredient(ctx,canvas.width/2,canvas.height/2,Number(canvas.dataset.scale || 2),canvas.dataset.kind);
+    else if(kind==='beast') drawBeast(ctx,canvas.width/2,canvas.height*.85,Number(canvas.dataset.scale || 2),{id:canvas.dataset.kind,growth:Number(canvas.dataset.growth || 0)});
     else drawMonster(ctx,canvas.width/2,canvas.height*.85,Number(canvas.dataset.scale || 2),canvas.dataset.kind,0,canvas.dataset.boss==='true');
   });
 }
@@ -1442,26 +1512,43 @@ function kitchenView() {
 }
 function beastStatus(beast) {
   if (beast.reviveAt) return `休养中 · ${countdown(beast.reviveAt)} 后恢复`;
-  if (MONSTERS[beast.id].boss && beast.growth < BOSS_MATURE_GROWTH) return `宝宝成长 ${beast.growth} / ${BOSS_MATURE_GROWTH} · 尚未解锁出战`;
   if (state.activeBeast === beast.id) return '正在出战 · 优先承受攻击';
   return '准备就绪 · 等待召唤';
 }
 function beastBattleStatus() {
   if (state.heroClass !== 'tamer') return '转职驯兽师，让伙伴一起冒险';
   if (state.phase === 'rest') return '花花正在休养，伙伴在营地等待';
-  if (state.activeBeast) return `${beastName(state.activeBeast)}守护中`;
+  if (state.activeBeast) return `${beastName(state.beasts[state.activeBeast])}守护中`;
   if (state.summonCooldown) return `召唤中 · 约 ${(state.summonCooldown / state.speed / 1000).toFixed(1)} 秒 · 花花承伤`;
-  return '暂无可出战伙伴 · 花花承伤，等待契约兽恢复';
+  return '暂无可出战伙伴 · 花花以 10% 攻击力自保，等待伙伴恢复';
 }
 function beastLoadoutCard() {
-  return `<article class="item-card beast-slot"><div class="item-top"><span>${icon('leaf')} 契约召唤</span><b>驯兽师专属</b></div><h3>以伙伴代替武器</h3><p class="item-meta">武器与武器强化不生效</p><p class="beast-explanation">通过晶体强化伙伴，通过喂养培养 Boss 宝宝。其他职业的装备独立保管，需先放回共享仓库才能转交。</p><button class="button secondary" data-action="nav" data-view="beasts">前往契约兽营地</button></article>`;
+  return `<article class="item-card beast-slot"><div class="item-top"><span>${icon('leaf')} 契约召唤</span><b>驯兽师专属</b></div><h3>以伙伴代替武器</h3><p class="item-meta">武器与武器强化不生效</p><p class="beast-explanation">出战获得经验，满级消耗素材进阶；同种晶体可额外强化。Boss 宝宝从初始形态就能战斗。其他职业的装备独立保管，需先放回共享仓库才能转交。</p><button class="button secondary" data-action="nav" data-view="beasts">前往契约兽营地</button></article>`;
+}
+function beastExperienceStatus(beast) {
+  return beast.level >= beastLevelCap(beast) ? beast.growth >= BEAST_MAX_GROWTH ? '已达到最高等级' : '等级已满 · 消耗素材进阶后继续升级' : '战斗经验 ' + beast.xp + ' / ' + beastXpNeeded(beast.level);
 }
 function beastsView() {
   const beasts=Object.values(state.beasts);
-  return `${heading('A BOND BEYOND THE BATTLE','契约兽营地','每一次契约，都是一段新的陪伴。',`<span class="collection-count"><b>${beasts.length}</b> / ${Object.keys(MONSTERS).length} 已契约</span>`)}<div class="beast-banner"><div>${art('hero','tamer',100,105,2.5)}<div><h3>空手结契，与魔物并肩</h3><p>驯兽师击败普通魔物有 ${(contractChance(state)*100).toFixed(0)}% 概率签约（基础 20%，幸运可提高）；重复契约获得 1 枚同种晶体，重复 Boss 契约获得 5 枚。</p><p>伙伴倒下后休养现实时间 1 小时；自动召唤下一只可用伙伴约需 2.85 秒（1×）。召唤期间花花承伤，无可用伙伴时等待恢复。</p></div></div><div class="beast-banner-footer"><b data-beast-battle-status>${beastBattleStatus()}</b><button class="button secondary" data-action="classes">${state.heroClass==='tamer'?'切换职业':'转职驯兽师'}</button></div></div><div class="system-note">${icon('heart')} Boss 宝宝必定随驯兽师的首领胜利加入，需用风味精华和首领专属素材喂养至 3 阶才能出战，最高 5 阶。休养期限不受暂停、倍速、转职或关闭页面影响。</div>${beasts.length?`<div class="beast-grid">${beasts.map(beast=>{
-    const id=beast.id, monster=MONSTERS[id], st=beastStats(state,id), cost=bossFeedCost(id,beast.growth);
-    return `<article class="beast-card ${monster.boss?'boss-baby':''} ${state.activeBeast===id?'active-beast':''}"><div class="item-top"><span>${monster.boss?'Boss 宝宝':'契约伙伴'}</span><b>${state.preferredBeast===id?'优先召唤':'自动轮换'}</b></div><div class="beast-portrait">${art('monster',monster.kind,126,100,monster.boss&&beast.growth<3?1.9:2.6,`data-boss="${!!monster.boss}"`)}${monster.boss?`<span>${beast.growth} / ${BOSS_MAX_GROWTH} 阶</span>`:''}</div><h3>${beastName(id)} <small>+${beast.rank}</small></h3><p class="beast-status" data-beast-status="${id}">${beastStatus(beast)}</p><div class="meter health beast-health"><i data-beast-bar="${id}" style="width:${beast.hp/st.maxHp*100}%"></i></div><p class="beast-hp" data-beast-hp="${id}">生命 ${beast.hp} / ${st.maxHp}</p><div class="beast-properties"><span>攻击 <b>${st.attack}</b></span><span>防御 <b>${st.defense}</b></span><span>速度 <b>${st.speed}</b></span></div><div class="beast-crystals">同种晶体 <b data-beast-crystals="${id}">${beast.crystals}</b><small>每次强化增加基础攻击、生命与防御的 12%</small></div><div class="beast-actions"><button class="button secondary" data-action="beast-prefer" data-id="${id}">${state.preferredBeast===id?'已优先':'优先召唤'}</button><button class="button" data-action="beast-upgrade" data-id="${id}">${beast.rank>=BEAST_MAX_RANK?'强化已满级':`强化 · ${beastUpgradeCost(beast)} 晶体`}</button></div>${monster.boss?`<div class="beast-feeding"><h4>${beast.growth>=BOSS_MAX_GROWTH?'已完成培养':`喂养至 ${beast.growth+1} 阶`}</h4><p>${beast.growth<BOSS_MATURE_GROWTH?'喂养至 3 阶后解锁出战，每阶提升基础属性 15%。':'已经学会战斗，还可以继续培养。'}</p>${cost?`<div class="craft-cost">${Object.entries(cost).map(([key,n])=>`<span>${MATERIALS.find(m=>m.id===key).name} <b data-material="${key}">${state.materials[key]}</b> / ${n}</span>`).join('')}</div><button class="button secondary" data-action="beast-feed" data-id="${id}">喂养稀有素材</button>`:''}</div>`:''}</article>`;
-  }).join('')}</div>`:`<div class="empty-state">${icon('leaf')}<h3>第一位伙伴，正在等你。</h3><p>Lv.1 即可转职驯兽师，首次转职获得黄油小菇。用新的战斗方式，结识更多魔物朋友。</p><button class="button" data-action="classes">选择驯兽师</button></div>`}`;
+  return `${heading('A BOND BEYOND THE BATTLE','契约兽营地','从第一次并肩作战，到一起长大。',`<span class="collection-count"><b>${beasts.length}</b> / ${Object.keys(MONSTERS).length} 已契约</span>`)}
+  <div class="beast-banner"><div>${art('hero','tamer',100,105,2.5)}<div><h3>空手结契，与魔物并肩</h3><p>驯兽师击败普通魔物有 ${(contractChance(state)*100).toFixed(0)}% 概率签约（基础 20%，幸运可提高）；重复契约获得 1 枚同种晶体，重复 Boss 契约获得 5 枚。</p><p>伙伴倒下后休养现实时间 10 分钟；自动召唤下一只可用伙伴约需 2.85 秒（1×）。全部伙伴阵亡时，花花以 10% 攻击力自保。</p></div></div><div class="beast-banner-footer"><b data-beast-battle-status>${beastBattleStatus()}</b><button class="button secondary" data-action="classes">${state.heroClass==='tamer'?'切换职业':'转职驯兽师'}</button></div></div>
+  <div class="system-note">${icon('heart')} 出战伙伴通过胜利独立升级，每级提升基础属性 6%；初始上限 Lv.5，满级消耗素材进阶，每阶增加 15% 基础属性并解锁 5 级上限，最高 Lv.30。Boss 宝宝即可战斗，进阶后逐步改变形态。</div>
+  ${beasts.length?`<div class="beast-grid">${beasts.map(beast=>{
+    const id=beast.id, monster=MONSTERS[id], st=beastStats(state,id), cost=beastAdvanceCost(id,beast.growth), form=beastForm(beast), cap=beastLevelCap(beast);
+    return `<article class="beast-card ${monster.boss?'boss-baby':''} ${state.activeBeast===id?'active-beast':''}">
+    <div class="item-top"><span>${form?form.name:'契约伙伴'}</span><b>${state.preferredBeast===id?'优先召唤':'自动轮换'}</b></div>
+    <div class="beast-portrait">${art('beast',id,126,100,monster.boss?1.8:2.2,`data-growth="${beast.growth}"`)}<span>${beast.growth} / ${BEAST_MAX_GROWTH} 阶</span></div>
+    <h3>${beastName(beast)} <small>+${beast.rank}</small></h3>
+    <div class="beast-level"><b>Lv.${beast.level} <small>/ ${cap}</small></b><span data-beast-xp="${id}">${beastExperienceStatus(beast)}</span></div>
+    <div class="meter experience beast-xp"><i data-beast-xp-bar="${id}" style="width:${beast.level===cap?100:beast.xp/beastXpNeeded(beast.level)*100}%"></i></div>
+    ${form?`<div class="beast-form-track" aria-label="Boss 形态成长">${BOSS_FORMS.map(stage=>`<span class="${form.id===stage.id?'current':beast.growth>=stage.growth?'reached':''}">${stage.name.replace('形态','')}<small>${stage.growth} 阶</small></span>`).join('')}</div>`:''}
+    <p class="beast-status" data-beast-status="${id}">${beastStatus(beast)}</p><div class="meter health beast-health"><i data-beast-bar="${id}" style="width:${beast.hp/st.maxHp*100}%"></i></div><p class="beast-hp" data-beast-hp="${id}">生命 ${beast.hp} / ${st.maxHp}</p>
+    <div class="beast-properties"><span>攻击 <b>${st.attack}</b></span><span>防御 <b>${st.defense}</b></span><span>速度 <b>${st.speed}</b></span></div>
+    <div class="beast-crystals">同种晶体 <b data-beast-crystals="${id}">${beast.crystals}</b><small>每次强化增加基础攻击、生命与防御的 12%</small></div>
+    <div class="beast-actions"><button class="button secondary" data-action="beast-prefer" data-id="${id}">${state.preferredBeast===id?'已优先':'优先召唤'}</button><button class="button" data-action="beast-upgrade" data-id="${id}">${beast.rank>=BEAST_MAX_RANK?'强化已满级':`强化 · ${beastUpgradeCost(beast)} 晶体`}</button></div>
+    <div class="beast-feeding"><h4>${cost?`进阶至 ${beast.growth+1} 阶 · 等级上限 Lv.${cap+5}`:'已完成全部进阶'}</h4><p>${cost?`需先战斗达到 Lv.${cap}，再消耗素材进阶。${monster.boss?'0 阶宝宝 → 1 阶幼年 → 3 阶成熟 → 5 阶觉醒。':'进阶提升攻击、生命上限和防御。'}`:'继续通过战斗成长至 Lv.30。'}休养中的伙伴进阶不会提前复活。</p>
+    ${cost?`<div class="craft-cost">${Object.entries(cost).map(([key,n])=>`<span>${MATERIALS.find(m=>m.id===key).name} <b data-material="${key}">${state.materials[key]}</b> / ${n}</span>`).join('')}</div><button class="button secondary" data-action="beast-feed" data-id="${id}">消耗素材进阶</button>`:''}</div></article>`;
+  }).join('')}</div>`:`<div class="empty-state">${icon('leaf')}<h3>第一位伙伴，正在等你。</h3><p>Lv.1 即可转职驯兽师，首次转职获得黄油小菇。通过战斗与进阶，一起成长。</p><button class="button" data-action="classes">选择驯兽师</button></div>`}`;
 }
 function syncBeasts() {
   setText('[data-beast-battle-status]',beastBattleStatus());
@@ -1473,11 +1560,11 @@ function syncBeasts() {
     document.querySelectorAll(`[data-beast-bar="${beast.id}"]`).forEach(el=>el.style.width=`${beast.hp/st.maxHp*100}%`);
   }
   const active=state.beasts[state.activeBeast];
-  setText('#beast-health-label',active?`生命 ${active.hp} / ${beastStats(state,active.id).maxHp}`:'');
+  setText('#beast-health-label',active?`Lv.${active.level} · ${active.growth} 阶 · 生命 ${active.hp} / ${beastStats(state,active.id).maxHp} · ${beastExperienceStatus(active)}`:'');
   const strip=document.getElementById('beast-battle-strip'); if(strip)strip.hidden=state.heroClass!=='tamer';
   document.querySelectorAll('[data-action="beast-prefer"]').forEach(el=>el.disabled=!ownsGame||state.preferredBeast===el.dataset.id);
   document.querySelectorAll('[data-action="beast-upgrade"]').forEach(el=>{const b=state.beasts[el.dataset.id];el.disabled=!ownsGame||b.rank>=BEAST_MAX_RANK||b.crystals<beastUpgradeCost(b);});
-  document.querySelectorAll('[data-action="beast-feed"]').forEach(el=>{const b=state.beasts[el.dataset.id],cost=bossFeedCost(b.id,b.growth);el.disabled=!ownsGame||!cost||Object.entries(cost).some(([id,n])=>state.materials[id]<n);});
+  document.querySelectorAll('[data-action="beast-feed"]').forEach(el=>{const b=state.beasts[el.dataset.id],cost=beastAdvanceCost(b.id,b.growth);el.disabled=!ownsGame||!cost||b.level<beastLevelCap(b)||Object.entries(cost).some(([id,n])=>state.materials[id]<n);});
 }
 function bestiaryView() {
   const entries=Object.entries(MONSTERS).filter(([,m])=>bestiaryFilter==='all'||(bestiaryFilter==='boss'?m.boss:!m.boss));
@@ -1618,7 +1705,7 @@ function syncUI() {
   }
   if(state.phase==='task'){values['battle-status']=!ownsGame?'另一窗口正在冒险':'正在处理旅途事务';if(ownsGame)values['global-status']='花花正在忙碌，事务按现实时间处理';values.turn=`${FIELD_TASKS[state.fieldTask.kind].name} · 完成后继续探索`;}
   if(['travel','event','rest','task'].includes(state.phase))values.round='—';
-  if(state.heroClass==='tamer'&&['hero','enemy'].includes(state.phase))values.turn=state.activeBeast?`${beastName(state.activeBeast)}并肩作战`:beastBattleStatus();
+  if(state.heroClass==='tamer'&&['hero','enemy'].includes(state.phase))values.turn=state.activeBeast?`${beastName(state.beasts[state.activeBeast])}并肩作战`:beastBattleStatus();
   Object.entries(values).forEach(([key,value])=>setText(`[data-bind="${key}"]`,value));
   document.querySelectorAll('[data-bar="hp"]').forEach(el=>el.style.width=`${Math.max(0,state.hp/st.maxHp*100)}%`);
   document.querySelectorAll('[data-bar="xp"]').forEach(el=>el.style.width=`${state.xp/xpNeeded(state.level)*100}%`);
@@ -1684,7 +1771,7 @@ function settingsDialog() {
   showModal(`<div class="eyebrow">MAKE YOURSELF AT HOME</div><h2>旅途小设置</h2><p class="modal-subtitle">按你喜欢的节奏，慢慢成为更美味的自己。</p><div class="setting-row"><div><b>战斗音效</b><p>轻柔的像素打击音，默认关闭</p></div><button class="button secondary sound-button" data-action="sound" aria-label="切换音效">${icon(state.sound?'sound':'mute')}</button></div><div class="setting-row"><div><b>本地存档</b><p>${storageAvailable?'每 5 秒自动保存，也可手动备份。':'浏览器存储不可用，请导出备份。'}</p></div><button class="button secondary" data-action="save">立即保存</button></div><div class="setting-row"><div><b>带着花花去别处</b><p>通过存档文件在不同浏览器之间迁移</p></div><div class="setting-buttons"><button class="button secondary" data-action="export">${icon('download')} 导出</button><button class="button secondary" data-action="import">导入</button></div></div><div class="setting-note">${icon('clock')} 页面在后台时继续按真实时间结算。浏览器休眠或关闭后，重回冒险可领取最长 8 小时的离线收获。</div>`);
 }
 function helpDialog() {
-  showModal(`<div class="eyebrow">YOUR FIRST LITTLE ADVENTURE</div><h2>欢迎来到爆米花物语</h2><p class="modal-subtitle">花花是一颗原味爆米花。它相信世界上一定有一种调料，能让自己变得独一无二。</p><div class="help-steps"><p><b>01 · 放心出发</b>战斗自动进行，击败魔物获得经验、金币、调料、素材、装备和图纸。更高评分的装备自动穿戴，多余装备存入仓库。</p><p><b>02 · 越来越美味</b>装备工坊中可按图纸制作武器、防具、护符和戒指；强化同时消耗金币与素材，并随栏位保留。闲置装备可单件或整组分解；自动分解可筛选品质、等级和部位，锁定装备始终保留。职业等级、经验、装备、强化和天赋独立保存；共享仓库可手动取用装备。新职业从 Lv.1 开始，天赋初始赠送 1 点，每次升级再得 1 点；厨房风味对所有职业永久生效。</p><p><b>03 · 去更远的地方</b>持续击败区域魔物，有机会发现隐藏 Boss 房。入口会保留，必须手动进入；胜利获得专属装备、素材和图纸，并解锁下一站。</p><p><b>04 · 属于你的战斗方式</b>速度越高出手越快；幸运提高掉率与品质；闪避可躲开攻击；生命偷取按实际造成的伤害恢复生命。装备与天赋都能提升这些属性。</p><p><b>05 · 倒下后，再出发</b>死亡后扣除 10% 金币与各类素材（向上取整），保留等级、装备、图纸、天赋和强化。现实时间 10 分钟后自动满血复活；暂停、倍速和刷新不影响倒计时。</p><p><b>06 · 小径上的新故事</b>战斗与事件之间会经过较长的探索，可能采到素材、意外受伤、休息恢复或收到传单。探索不显示剩余时间。采集晶矿、修复营地、照料精灵需要现实时间 3、5、10 分钟，处理期间停止遇怪，到期自动发放谢礼并继续探索。可手动花金币订购传单商品，按现实时间配送并自动入库。传单每 30 分钟刷新补货，已付款订单不受影响；查看传单和等待配送都不会中断挂机。</p><p><b>07 · 把冒险装进小窗</b>点击「小窗冒险」打开独立观战窗口。支持画中画的浏览器可置顶；其余浏览器打开普通小窗口。暂停时不积累离线收益。</p><p><b>08 · 和魔物成为伙伴</b>Lv.1 可选择驯兽师，首次转职赠送黄油小菇；不使用武器，由契约兽攻击并优先承伤。普通魔物基础签约概率 20%，重复契约变成同种晶体，可在营地强化。伙伴倒下后现实时间 1 小时恢复，自动换召期间花花承伤。驯兽师击败首领必得 Boss 宝宝，喂养风味精华与首领素材至 3 阶才能出战。</p></div><button class="button" data-action="close">准备好了，继续冒险 ${icon('arrow')}</button>`);
+  showModal(`<div class="eyebrow">YOUR FIRST LITTLE ADVENTURE</div><h2>欢迎来到爆米花物语</h2><p class="modal-subtitle">花花是一颗原味爆米花。它相信世界上一定有一种调料，能让自己变得独一无二。</p><div class="help-steps"><p><b>01 · 放心出发</b>战斗自动进行，击败魔物获得经验、金币、调料、素材、装备和图纸。更高评分的装备自动穿戴，多余装备存入仓库。</p><p><b>02 · 越来越美味</b>装备工坊中可按图纸制作武器、防具、护符和戒指；强化同时消耗金币与素材，并随栏位保留。闲置装备可单件或整组分解；自动分解可筛选品质、等级和部位，锁定装备始终保留。职业等级、经验、装备、强化和天赋独立保存；共享仓库可手动取用装备。新职业从 Lv.1 开始，天赋初始赠送 1 点，每次升级再得 1 点；厨房风味对所有职业永久生效。</p><p><b>03 · 去更远的地方</b>持续击败区域魔物，有机会发现隐藏 Boss 房。入口会保留，必须手动进入；胜利获得专属装备、素材和图纸，并解锁下一站。</p><p><b>04 · 属于你的战斗方式</b>速度越高出手越快；幸运提高掉率与品质；闪避可躲开攻击；生命偷取按实际造成的伤害恢复生命。装备与天赋都能提升这些属性。</p><p><b>05 · 倒下后，再出发</b>死亡后扣除 10% 金币与各类素材（向上取整），保留等级、装备、图纸、天赋和强化。现实时间 10 分钟后自动满血复活；暂停、倍速和刷新不影响倒计时。</p><p><b>06 · 小径上的新故事</b>战斗与事件之间会经过约 20 秒的探索（1×），可能采到素材、意外受伤、休息恢复或收到传单。探索不显示剩余时间。采集晶矿、修复营地、照料精灵均需要现实时间 5 分钟，处理期间停止遇怪，到期自动发放谢礼并继续探索。可手动花金币订购传单商品，按现实时间配送并自动入库。传单每 30 分钟刷新补货，已付款订单不受影响；查看传单和等待配送都不会中断挂机。</p><p><b>07 · 把冒险装进小窗</b>点击「小窗冒险」打开独立观战窗口。支持画中画的浏览器可置顶；其余浏览器打开普通小窗口。暂停时不积累离线收益。</p><p><b>08 · 和魔物成为伙伴</b>Lv.1 可选择驯兽师，首次转职赠送黄油小菇；不使用武器，由契约兽攻击并优先承伤。普通魔物基础签约概率 20%，重复契约变成同种晶体，可在营地强化。伙伴倒下后现实时间 10 分钟恢复，自动换召期间花花承伤；全部伙伴阵亡时以 10% 攻击力自保。出战伙伴通过胜利获得独立经验，初始等级上限 Lv.5，满级消耗素材进阶，每阶解锁 5 级，最高 Lv.30。驯兽师击败首领必得 Boss 宝宝，宝宝即可出战，进阶至 1、3、5 阶分别变为幼年、成熟、觉醒形态。</p></div><button class="button" data-action="close">准备好了，继续冒险 ${icon('arrow')}</button>`);
 }
 function showOfflineReport() {
   if(!offlineReport) return;

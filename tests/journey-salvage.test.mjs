@@ -74,7 +74,7 @@ test('invalid recycling rules leave settings intact',()=>{
   }
 });
 
-test('new travel intervals are longer and travel cannot bypass them',()=>{
+test('new travel intervals last about twenty seconds and travel cannot bypass them',()=>{
   const s=newGame(1000);s.enemy.hp=1;s.heroCooldown=0;s.enemyCooldown=STEP_MS*2;tick(s);
   assert.equal(s.phase,'travel');assert.ok(s.wait>=JOURNEY_MIN_TICKS&&s.wait<=JOURNEY_MAX_TICKS);
   const wait=s.wait;for(let i=0;i<wait-1;i++)tick(s);assert.equal(s.phase,'travel');assert.equal(s.wait,1);
@@ -127,7 +127,7 @@ test('v2 migration retains items, resources, progress and death losses while add
   const x=spare(s,{quality:2});
   delete s.materials.essence;delete s.deathLoss.materials.essence;
   for(const key of ['autoSalvage','salvaged','inventoryRevision','journeyCount','journeyEvent','nextFlyerId','flyer'])delete s[key];
-  const loaded=restore(serialize(s),s.lastTick);assert.ok(loaded);assert.equal(loaded.version,6);
+  const loaded=restore(serialize(s),s.lastTick);assert.ok(loaded);assert.equal(loaded.version, 7);
   assert.equal(loaded.xp,24);assert.equal(loaded.level,7);assert.equal(loaded.materials.ore,33);assert.equal(loaded.materials.essence,0);
   assert.equal(loaded.reviveAt,s.reviveAt);assert.equal(loaded.deathLoss.materials.essence,0);assert.deepEqual(loaded.warehouse,[x]);
   assert.equal(loaded.autoSalvage.enabled,false);assert.equal(loaded.flyer,null);

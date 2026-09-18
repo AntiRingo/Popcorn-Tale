@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { newGame, advance, tick, stats, changeClass, spawnEnemy, receiveItem, upgradeGear, enterBoss, serialize, restore, settleRealTime, preferBeast, upgradeBeast, feedBeast, beastStats, beastReady, beastUpgradeCost, bossFeedCost, contractChance, STEP_MS, SUMMON_MS, BEAST_REVIVE_MS, MAX_OFFLINE_MS, ZONES } from '../src/engine.js';
+import { newGame, advance, tick, stats, changeClass, spawnEnemy, receiveItem, upgradeGear, enterBoss, serialize, restore, settleRealTime, preferBeast, upgradeBeast, feedBeast, beastStats, beastReady, beastForm, beastName, beastLevelCap, beastXpNeeded, beastAdvanceCost, beastUpgradeCost, bossFeedCost, contractChance, STEP_MS, SUMMON_MS, BEAST_REVIVE_MS, MAX_OFFLINE_MS, ZONES } from '../src/engine.js';
 
 function tamer() {
   const s = newGame(1000);
@@ -11,7 +11,7 @@ function tamer() {
   return s;
 }
 function addCompanion(s, id, growth = 0) {
-  s.beasts[id] = { id, hp: 1, rank: 0, growth, crystals: 0, reviveAt: 0 };
+  s.beasts[id] = { id, level: 1, xp: 0, hp: 1, rank: 0, growth, crystals: 0, reviveAt: 0 };
   s.beasts[id].hp = beastStats(s, id).maxHp;
   return s.beasts[id];
 }
@@ -91,11 +91,13 @@ test('fallen beasts do not pass excess damage to the hero; replacement has a vul
   assert.equal(s.beasts.mushroom.hp, 0);
 });
 
-test('preferred companions are used on the next summon and resting beasts and immature babies are skipped', () => {
+test('preferred companions are used on the next summon and babies can be summoned while resting beasts are skipped', () => {
   const s = tamer(); addCompanion(s, 'slime'); addCompanion(s, 'mushroomKing');
   assert.equal(preferBeast(s, 'unknown').ok, false);
   assert.equal(preferBeast(s, 'mushroomKing').ok, true);
   assert.equal(s.activeBeast, 'mushroom', 'changing priority never cancels an active summon');
+  knockOut(s); s.enemy.attack = 1; tick(s); tick(s);
+  assert.equal(s.activeBeast, 'mushroomKing');
   knockOut(s); s.enemy.attack = 1; tick(s); tick(s);
   assert.equal(s.activeBeast, 'slime');
   knockOut(s); s.enemy.attack = 1; tick(s); tick(s);
@@ -104,7 +106,7 @@ test('preferred companions are used on the next summon and resting beasts and im
   assert.equal(beastReady(s.beasts.mushroomKing), false);
 });
 
-test('one-hour recovery is exact across speed, pause, reload, repeated settlement and an absence over the offline cap', () => {
+test('ten-minute recovery is exact across speed, pause, reload, repeated settlement and an absence over the offline cap', () => {
   for (const speed of [1, 2]) {
     const s = tamer(); s.speed = speed;
     knockOut(s); const deadline = s.beasts.mushroom.reviveAt;
@@ -128,11 +130,12 @@ test('one-hour recovery is exact across speed, pause, reload, repeated settlemen
   }
 });
 
-test('no available companion means no hero attacks, then recovery automatically restarts summoning', () => {
+test('no available companion triggers weak self-defense, then recovery automatically restarts summoning', () => {
   const s = tamer(); knockOut(s); s.enemy.attack = 1; s.hp = stats(s).maxHp;
   const enemyHp = s.enemy.hp;
   for (let i = 0; i < 5; i++) tick(s);
-  assert.equal(s.enemy.hp, enemyHp);
+  assert.ok(s.enemy.hp < enemyHp);
+  assert.ok(enemyHp - s.enemy.hp <= 4, 'self-defense is much weaker than companion attacks');
   assert.equal(s.activeBeast, null);
   const deadline = s.beasts.mushroom.reviveAt;
   s.running = false; advance(s, deadline);
@@ -157,18 +160,19 @@ test('ordinary victories contract probabilistically, duplicates grant same-speci
   assert.equal(recruits, duplicates);
 });
 
-test('all six bosses grant babies, repeated bosses grant crystals and babies require rare-material feeding before combat', () => {
+test('all six bosses grant babies, repeated bosses grant crystals and babies fight immediately and need battle levels plus materials to advance', () => {
   for (const [zone, data] of ZONES.entries()) {
     const s = tamer(); s.zone = s.unlockedZone = zone; s.autoTravel = false; s.bossRooms[zone] = true;
     assert.equal(enterBoss(s).ok, true);
     killEnemy(s, data.boss, true);
     const baby = s.beasts[data.boss];
-    assert.equal(baby.growth, 0); assert.equal(beastReady(baby), false);
+    assert.equal(baby.growth, 0); assert.equal(beastReady(baby), true);
     assert.ok(s.materials[`boss${zone}`] > 0);
     killEnemy(s, data.boss, true);
     assert.equal(baby.crystals, 5);
     assert.equal(Object.keys(s.beasts).length, 2);
     for (let growth = 0; growth < 5; growth++) {
+      baby.level = beastLevelCap(baby); baby.xp = 0;
       const cost = bossFeedCost(baby.id, growth);
       const before = serialize(s);
       assert.equal(feedBeast(s, baby.id).ok, false);
@@ -176,7 +180,7 @@ test('all six bosses grant babies, repeated bosses grant crystals and babies req
       Object.assign(s.materials, cost);
       assert.equal(feedBeast(s, baby.id).ok, true);
       for (const key of Object.keys(cost)) assert.equal(s.materials[key], 0);
-      assert.equal(beastReady(baby), growth >= 2);
+      assert.equal(beastReady(baby), true);
     }
     assert.equal(feedBeast(s, baby.id).ok, false);
     assert.equal(feedBeast(s, 'mushroom').ok, false);
@@ -202,6 +206,7 @@ test('crystal upgrades are atomic, species-specific and capped; all growth actio
   const baby = addCompanion(s, 'mushroomKing', 3); baby.crystals = 20;
   s.activeBeast = baby.id; knockOut(s);
   const deadline = baby.reviveAt;
+  baby.level = beastLevelCap(baby); baby.xp = 0;
   Object.assign(s.materials, bossFeedCost(baby.id, baby.growth));
   assert.equal(feedBeast(s, baby.id).ok, true);
   assert.equal(upgradeBeast(s, baby.id).ok, true);
@@ -213,7 +218,7 @@ test('crystal upgrades are atomic, species-specific and capped; all growth actio
 test('foreground and offline simulation agree through companion deaths and recoveries', () => {
   for (const speed of [1, 2]) {
     const a = tamer(), b = structuredClone(a); a.speed = b.speed = speed;
-    // Force an early companion death, then expose the hero during the hour of recovery.
+    // Force an early companion death, then expose the hero during the ten minutes of recovery.
     knockOut(a); knockOut(b); a.enemy.attack = b.enemy.attack = 4;
     const end = a.lastTick + BEAST_REVIVE_MS * 2 + 15000;
     for (let now = a.lastTick + 250; now <= end; now += 250) advance(a, now);
@@ -223,16 +228,18 @@ test('foreground and offline simulation agree through companion deaths and recov
   }
 });
 
-test('v4 saves migrate without free contracts; v6 persists pets and rejects invalid active, dead and growth states', () => {
+test('v4 saves migrate without free contracts; v7 persists pets and rejects invalid active, dead and growth states', () => {
   const old = newGame(1000); old.version = 4;
   for (const key of ['beasts','activeBeast','preferredBeast','summonCooldown','beastRevision']) delete old[key];
   const migrated = restore(serialize(old), 1000);
-  assert.equal(migrated.version, 6); assert.deepEqual(migrated.beasts, {});
+  assert.equal(migrated.version, 7); assert.deepEqual(migrated.beasts, {});
   const s = tamer(); assert.deepEqual(restore(serialize(s), s.lastTick), s);
   const bad = [
     x => x.beasts.mushroom.rank = -1,
     x => x.beasts.mushroom.crystals = 1.5,
-    x => x.beasts.mushroom.growth = 3,
+    x => x.beasts.mushroom.growth = 6,
+    x => x.beasts.mushroom.level = 6,
+    x => x.beasts.mushroom.xp = beastXpNeeded(1),
     x => x.beasts.mushroom.id = 'slime',
     x => x.beasts.mushroom.hp = 0,
     x => x.beasts.mushroom.reviveAt = x.lastTick + BEAST_REVIVE_MS,
@@ -240,7 +247,7 @@ test('v4 saves migrate without free contracts; v6 persists pets and rejects inva
     x => x.preferredBeast = '__proto__',
     x => x.summonCooldown = SUMMON_MS + 1,
     x => x.heroClass = 'knight',
-    x => { addCompanion(x, 'mushroomKing'); x.activeBeast = 'mushroomKing'; },
+    x => { const baby = addCompanion(x, 'mushroomKing'); baby.hp = 0; baby.reviveAt = x.lastTick + BEAST_REVIVE_MS; x.activeBeast = baby.id; },
   ];
   for (const mutate of bad) {
     const copy = structuredClone(s); mutate(copy);

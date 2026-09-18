@@ -101,7 +101,7 @@ test('v5 migration assigns old progression to the active profession, retains pet
   s.level = 12; s.xp = 200; s.talents = { might: 3 }; s.gear.shield = 5;
   s.beasts.mushroom.hp = 100000; s.beasts.mushroom.rank = 2; s.beasts.mushroom.crystals = 17;
   const loaded = restore(serialize(s), 1000);
-  assert.ok(loaded); assert.equal(loaded.version, 6); assert.equal(loaded.level, 12);
+  assert.ok(loaded); assert.equal(loaded.version, 7); assert.equal(loaded.level, 12);
   assert.equal(loaded.xp, 200); assert.equal(loaded.gear.shield, 5); assert.equal(loaded.talents.might, 3);
   assert.equal(loaded.beasts.mushroom.hp, beastStats(loaded, 'mushroom').maxHp);
   assert.equal(loaded.beasts.mushroom.crystals, 17); assert.equal(loaded.beasts.mushroom.rank, 2);

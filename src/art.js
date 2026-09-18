@@ -1,4 +1,4 @@
-import { MONSTERS, beastStats } from './engine.js';
+import { MONSTERS, beastStats, beastForm } from './engine.js';
 
 const PALETTE = {
   outline: '#343d37', cream: '#fff0c5', pale: '#fff8df', gold: '#eac66d', ochre: '#b28b4e',
@@ -107,6 +107,28 @@ export function drawMonster(ctx, x, y, scale = 3, kind = 'mushroom', frame = 0, 
   }
   if (boss) {
     r(-8,-34,17,4,'#bd9049'); r(-8,-38,3,5,'#edce6d'); r(-1,-40,3,7,'#edce6d'); r(6,-38,3,5,'#edce6d'); r(-6,-34,13,2,'#ffe7a1');
+  }
+  ctx.restore();
+}
+
+export function drawBeast(ctx, x, y, scale, beast, frame = 0) {
+  const monster = MONSTERS[beast.id], form = beastForm(beast);
+  if (!form) { drawMonster(ctx, x, y, scale, monster.kind, frame); return; }
+  ctx.save(); ctx.translate(Math.round(x), Math.round(y)); ctx.scale(scale * form.scale, scale * form.scale);
+  if (form.id === 'awakened') {
+    for (const side of [-1, 1]) {
+      polygon(ctx, [[side*9,-7],[side*23,-20],[side*26,-33],[side*16,-24],[side*10,-27]], '#d9c47c');
+      box(ctx, side*24-1, -39-frame*2, 3, 3, '#fff0b6');
+    }
+  }
+  drawMonster(ctx, 0, 0, 1, monster.kind, frame, ['mature', 'awakened'].includes(form.id));
+  if (form.id === 'baby') {
+    box(ctx, -4, -5+ (frame ? -1 : 0), 9, 3, '#f2d8a0');
+    box(ctx, -1, -5+ (frame ? -1 : 0), 3, 2, '#d5a770');
+  } else if (form.id === 'young') {
+    box(ctx, -7, -7, 14, 3, '#89ac80'); box(ctx, 5, -6, 4, 8, '#6c966e');
+  } else if (form.id === 'awakened') {
+    box(ctx, -1, -37, 3, 4, '#b1d6c4'); box(ctx, -2, -43-frame, 5, 2, '#fff0b6');
   }
   ctx.restore();
 }
@@ -250,10 +272,10 @@ export function drawScene(canvas, s, time = 0, visual = {}) {
     const maxHp=beastStats(s,pet.id).maxHp;
     ctx.globalAlpha=.18;box(ctx,px-17,141,34,4,'#283d2e');ctx.globalAlpha=1;
     if(visual.type==='beast-hit'&&kick>.9)ctx.globalAlpha=.55;
-    drawMonster(ctx,px,142,1.35,MONSTERS[pet.id].kind,frame,!!MONSTERS[pet.id].boss);
+    drawBeast(ctx,px,142,MONSTERS[pet.id].boss?1.05:1.35,pet,frame);
     ctx.globalAlpha=1;
     box(ctx,px-17,93,34,3,'#4c6758');box(ctx,px-17,93,34*pet.hp/maxHp,3,'#b8d68d');
-    ctx.fillStyle='#e4efc9';ctx.font='7px sans-serif';ctx.textAlign='center';ctx.fillText('契约伙伴',px,88);
+    ctx.fillStyle='#e4efc9';ctx.font='7px sans-serif';ctx.textAlign='center';ctx.fillText(beastForm(pet)?.name || '契约伙伴',px,88);
   } else if(s.heroClass==='tamer'&&s.summonCooldown&&s.phase!=='rest') {
     ctx.strokeStyle='#d2deb0';ctx.lineWidth=1;ctx.beginPath();ctx.ellipse(202,138,19,5,0,0,Math.PI*2);ctx.stroke();
     ctx.fillStyle='#e4efc9';ctx.font='7px sans-serif';ctx.textAlign='center';ctx.fillText('召唤中…',202,117);
@@ -327,6 +349,7 @@ export function paintArt(root=document) {
     ctx.clearRect(0,0,canvas.width,canvas.height);ctx.imageSmoothingEnabled=false;
     if(kind==='hero') drawHero(ctx,canvas.width/2,canvas.height*.84,Number(canvas.dataset.scale || 3),canvas.dataset.kind || 'knight');
     else if(kind==='ingredient') drawIngredient(ctx,canvas.width/2,canvas.height/2,Number(canvas.dataset.scale || 2),canvas.dataset.kind);
+    else if(kind==='beast') drawBeast(ctx,canvas.width/2,canvas.height*.85,Number(canvas.dataset.scale || 2),{id:canvas.dataset.kind,growth:Number(canvas.dataset.growth || 0)});
     else drawMonster(ctx,canvas.width/2,canvas.height*.85,Number(canvas.dataset.scale || 2),canvas.dataset.kind,0,canvas.dataset.boss==='true');
   });
 }
