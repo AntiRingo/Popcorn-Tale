@@ -109,13 +109,13 @@ test('talent points follow level, parent ranks and rank caps, and improve every 
   assert.equal(upgradeTalent(s,'precision').ok,false);
   assert.equal(upgradeTalent(s,'might').ok,true);assert.equal(talentPoints(s),0);
   assert.equal(upgradeTalent(s,'might').ok,false);
-  s.level=50;const before=stats(s);
-  for(const talent of TALENTS) {
+  s.level=200;const before=stats(s);
+  for(const talent of TALENTS.filter(t=>!t.heroClass||t.heroClass===s.heroClass)) {
     while((s.talents[talent.id]||0)<talent.max)assert.equal(upgradeTalent(s,talent.id).ok,true);
     assert.equal(upgradeTalent(s,talent.id).ok,false);
   }
   for(const key of ['attack','maxHp','defense','crit','speed','luck','dodge','lifesteal'])assert.ok(stats(s)[key]>before[key],key);
-  assert.equal(talentPoints(s),10);assert.deepEqual(restore(serialize(s),1000),s);
+  assert.equal(talentPoints(s),200-TALENTS.filter(t=>!t.heroClass||t.heroClass===s.heroClass).reduce((sum,t)=>sum+t.max,0));assert.deepEqual(restore(serialize(s),1000),s);
 });
 
 test('haste increases hero attack frequency without accelerating enemy attacks',()=>{
@@ -176,12 +176,14 @@ test('death loses 10% currency/materials once and preserves permanent progressio
   advance(loaded,loaded.reviveAt);assert.equal(loaded.hp,stats(loaded).maxHp);assert.equal(loaded.reviveAt,0);
 });
 
-test('revival uses ten real minutes regardless of pause, speed, reload and actions',()=>{
+test('revival uses one real hour regardless of pause, speed, reload and actions',()=>{
   for(const speed of [1,2])for(const running of [true,false]){
     const s=newGame(1000);s.level=20;s.gold=10000;s.inventory.salt=100;
     killHero(s);s.speed=speed;s.running=running;const deadline=s.reviveAt;
     assert.equal(travel(s,0).ok,false);assert.equal(enterBoss(s).ok,false);
-    assert.equal(changeClass(s,'cleric').ok,true);assert.equal(s.hp,0);
+    assert.equal(changeClass(s,'cleric').ok,true);assert.ok(s.hp>0);
+    assert.equal(s.professions.knight.reviveAt,deadline);
+    assert.equal(changeClass(s,'knight').ok,true);assert.equal(s.hp,0);
     Object.assign(s.materials,gearMaterialCost(s,'charm'));
     assert.equal(upgradeGear(s,'charm').ok,true);cook(s,'salt');upgradeTalent(s,'vitality');assert.equal(s.hp,0);
     advance(s,deadline-1);assert.equal(s.hp,0);assert.equal(s.reviveAt,deadline);
@@ -210,7 +212,7 @@ test('legacy saves migrate without losing currencies, levels, recipes or enhance
   s.version=1;delete s.gear.ring;
   for(const key of ['equipped','warehouse','nextItemId','materials','blueprints','talents','zoneKills','bossRooms','inBoss','reviveAt','deathLoss','heroCooldown','enemyCooldown'])delete s[key];
   const loaded=restore(serialize(s),1000);assert.ok(loaded);
-  assert.equal(loaded.version, 7);assert.equal(loaded.level,12);assert.equal(loaded.gold,456);
+  assert.equal(loaded.version, 9);assert.equal(loaded.level,12);assert.equal(loaded.gold,456);
   assert.equal(loaded.gear.weapon,4);assert.equal(loaded.inventory.butter,15);assert.equal(loaded.recipes.butter,2);
   assert.equal(talentPoints(loaded),12);assert.deepEqual(loaded.warehouse,[]);
   s.phase='rest';s.hp=0;const dead=restore(serialize(s),2000);assert.ok(dead);assert.equal(dead.reviveAt,1000+REVIVE_MS);

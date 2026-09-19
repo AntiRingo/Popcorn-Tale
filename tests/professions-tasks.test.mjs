@@ -1,3 +1,4 @@
+import { addPet } from './pet-fixtures.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { newGame, stats, advance, tick, spawnEnemy, changeClass, classProgress, highestLevel, receiveItem, equipWarehouseItem, unequipItem, upgradeGear, upgradeTalent, gearMaterialCost, xpNeeded, restore, serialize, beastStats, travel, enterBoss, settleRealTime, placeOrder, STEP_MS, MAX_OFFLINE_MS, JOURNEY_MIN_TICKS, JOURNEY_MAX_TICKS } from '../src/engine.js';
@@ -79,15 +80,16 @@ test('equipping a warehouse stack consumes one copy and does not auto-salvage th
   assert.ok(restore(serialize(s), s.lastTick));
   unequipItem(s, 'weapon'); assert.equal(stack.count, 3);
   changeClass(s, 'tamer');
-  const before = serialize(s); assert.equal(equipWarehouseItem(s, stack.id).ok, false);
-  assert.equal(serialize(s), before);
+  assert.equal(equipWarehouseItem(s, stack.id).ok, true);
+  assert.equal(s.equipped.weapon.count, 1); assert.equal(stack.count, 2);
 });
 
-test('beasts have lower base stats and remain tied to the tamer profile across other professions', () => {
+test('pet base growth is independent of profession level and ordinary equipment', () => {
   const s = newGame(1000); s.level = 12;
   changeClass(s, 'tamer');
+  const pet = addPet(s, 'mushroom', 'mushroom');
   const base = beastStats(s, 'mushroom');
-  assert.deepEqual({ attack: base.attack, maxHp: base.maxHp, defense: base.defense }, { attack: 11, maxHp: 95, defense: 4 });
+  assert.deepEqual({ attack: base.attack, maxHp: base.maxHp, defense: base.defense }, { attack: 11, maxHp: 95, defense: 5 });
   s.level = 3; s.talents = { might: 2 };
   const grown = beastStats(s, 'mushroom'), hp = s.beasts.mushroom.hp;
   changeClass(s, 'knight'); s.level = 20; s.gear.charm = 10;
@@ -97,11 +99,12 @@ test('beasts have lower base stats and remain tied to the tamer profile across o
 
 test('v5 migration assigns old progression to the active profession, retains pets and safely clamps their lowered health', () => {
   const s = newGame(1000); changeClass(s, 'tamer');
+  addPet(s, 'mushroom', 'mushroom');
   s.version = 5; delete s.professions; delete s.fieldTask;
   s.level = 12; s.xp = 200; s.talents = { might: 3 }; s.gear.shield = 5;
   s.beasts.mushroom.hp = 100000; s.beasts.mushroom.rank = 2; s.beasts.mushroom.crystals = 17;
   const loaded = restore(serialize(s), 1000);
-  assert.ok(loaded); assert.equal(loaded.version, 7); assert.equal(loaded.level, 12);
+  assert.ok(loaded); assert.equal(loaded.version, 9); assert.equal(loaded.level, 12);
   assert.equal(loaded.xp, 200); assert.equal(loaded.gear.shield, 5); assert.equal(loaded.talents.might, 3);
   assert.equal(loaded.beasts.mushroom.hp, beastStats(loaded, 'mushroom').maxHp);
   assert.equal(loaded.beasts.mushroom.crystals, 17); assert.equal(loaded.beasts.mushroom.rank, 2);

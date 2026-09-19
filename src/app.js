@@ -1,8 +1,10 @@
 import { SAVE_KEY, STEP_MS, MAX_OFFLINE_MS, INGREDIENTS, ZONES, MONSTERS, CLASSES, RECIPES, ACHIEVEMENTS, stats, xpNeeded, gearCost, gearMaterialCost, recipeCost, newGame, advance, upgradeGear, cook, travel, changeClass, achievementProgress, claimAchievement, serialize, restore, enterBoss, upgradeTalent, craft, salvageItem, salvageMatching, setAutoSalvage, toggleItemLock, placeOrder, discardFlyer, settleRealTime } from './engine.js';
 import { EQUIPMENT_SLOTS, QUALITIES, STAT_LABELS, PERCENT_STATS, MATERIALS, TALENTS, BLUEPRINTS, itemStats, itemName, itemScore, talentPoints, talentAvailable, craftingCost, salvageRewards, flyerProducts, orderProduct, MAX_PENDING_ORDERS, matchesSalvageRule, JOURNEY_EVENTS } from './progression.js';
 import { drawScene, paintArt } from './art.js';
-import { beastName, beastStats, beastUpgradeCost, beastAdvanceCost, beastLevelCap, beastXpNeeded, beastForm, BOSS_FORMS, contractChance, preferBeast, upgradeBeast, feedBeast, BEAST_MAX_RANK, BEAST_MAX_GROWTH } from './engine.js';
+import { beastName, beastStats, beastAdvanceCost, beastXpNeeded, beastForm, BOSS_FORMS, petEggChance, preferBeast, feedBeast } from './engine.js';
 import { classProgress, highestLevel, equipWarehouseItem, unequipItem } from './engine.js';
+import { classGear, canEquip } from './progression.js';
+import { startIncubation, beastSpecies, beastReady, PET_SKILLS, MAX_INCUBATORS, MAX_PET_FORMATION, setPetFormation, moveFormationPet } from './engine.js';
 import { FIELD_TASKS, fieldTaskRewards } from './progression.js';
 
 const icons = {
@@ -48,20 +50,20 @@ let lastEvent=-1, lastLog='', lastSave=0, toastTimeout, frameRequest=0, previous
 let visual = { at:0, type:'spawn', monsterKind: MONSTERS[state.enemy.id].kind };
 let ownsGame=true, lockRelease=null;
 let offlineReport=null;
+let talentBranch='锋芒';
 let equipmentTab='warehouse', warehouseFilter='all', warehousePage=0, lastProgression='';
 const signed = value => `${value >= 0 ? '+' : '−'}${number(Math.abs(value))}`;
 const statValue = (key, value) => PERCENT_STATS.includes(key) ? `${Number((value * 100).toFixed(1))}%` : number(value);
 const rewardsText = (rewards, count=1) => Object.entries(rewards).map(([id,n])=>`${MATERIALS.find(m=>m.id===id).name} +${number(n*count)}`).join(' · ');
 function revivalCountdown() {
-  const seconds=Math.max(0,Math.ceil((state.reviveAt-Date.now())/1000));
-  return `${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`;
+  return countdown(state.reviveAt);
 }
 
 const logo = `<svg class="brand-mark" viewBox="0 0 48 52" aria-hidden="true"><path fill="#bfa668" d="M13 3h9V0h10v6h8v7h5v17h-7v18H12V31H4V15h7V8h2z"/><path fill="#fff0c5" d="M14 6h10V3h6v7h8v7h5v10H8V17h6z"/><path fill="#dfbc70" d="M18 13h6v8h-6zm13 6h7v6h-7z"/><path fill="#c67452" d="M12 29h26l-4 20H16z"/><path fill="#f3deaa" d="M17 31h5l2 16h-5zm11 0h5l-2 16h-5z"/></svg>`;
 
 function shell() {
   app.innerHTML = `<header class="topbar"><div class="topbar-inner"><a class="brand" href="#" data-action="nav" data-view="adventure">${logo}<span>爆米花<span class="brand-small">物语</span><small>POPCORN TALES</small></span></a>
-    <nav class="navigation" aria-label="主导航">${[['adventure','sword','冒险旅途'],['equipment','bag','装备工坊'],['talents','spark','天赋树'],['beasts','heart','契约兽营地'],['kitchen','leaf','风味厨房'],['bestiary','book','魔物图鉴'],['map','map','旅途地图']].map(([id,ic,label])=>`<button class="nav-item ${id===view?'active':''}" data-action="nav" data-view="${id}">${icon(ic)}<span>${label}</span></button>`).join('')}</nav>
+    <nav class="navigation" aria-label="主导航">${[['adventure','sword','冒险旅途'],['equipment','bag','装备工坊'],['talents','spark','天赋树'],['beasts','heart','宠物营地'],['kitchen','leaf','风味厨房'],['bestiary','book','魔物图鉴'],['map','map','旅途地图']].map(([id,ic,label])=>`<button class="nav-item ${id===view?'active':''}" data-action="nav" data-view="${id}">${icon(ic)}<span>${label}</span></button>`).join('')}</nav>
     <div class="top-tools"><div class="currency" title="金币 · 战斗中自动获得">${icon('coin')}<b data-bind="gold">120</b></div><div class="ingredient-counter" title="背包中的调料总数">${icon('bag')}<b data-bind="inventory">0</b></div><span class="tool-divider"></span><button class="icon-button sound-button" data-action="sound" title="开启音效" aria-label="开启音效">${icon('mute')}</button><button class="icon-button" data-action="settings" title="设置与存档" aria-label="设置与存档">${icon('settings')}</button></div>
     </div></header>
     <div class="page-wrap"><div class="page-intro"><div><div class="eyebrow">A LITTLE KERNEL. A BIG ADVENTURE.</div><h1>世界那么大，去尝尝吧<span class="title-dot">。</span></h1><p>从一颗原味爆米花，到独一无二的美味勇士。</p></div><div class="intro-note"><span class="live-dot"></span><span data-bind="global-status">冒险正在自动进行</span><small>把时间留给生活，把美味交给冒险。</small></div></div>
@@ -74,8 +76,8 @@ function renderSidebar() {
     <div class="hero-portrait"><div class="portrait-grid"></div><span class="portrait-spark s1">✦</span><span class="portrait-spark s2">+</span><span class="portrait-spark s3">✧</span><span class="level-tag">Lv.<b data-bind="level">1</b></span>${art('hero',state.heroClass,180,150,3.4)}<span class="portrait-shadow"></span><div class="portrait-grass"></div></div>
     <div class="hero-name"><h2>花花 <span>原味出发</span></h2><p id="class-name">${CLASSES.find(c=>c.id===state.heroClass).name}</p></div>
     <div class="hero-bars"><div class="bar-label"><span>${icon('heart')} 生命值</span><b><span data-bind="hp">115</span><em> / <span data-bind="maxHp">115</span></em></b></div><div class="meter health"><i data-bar="hp"></i></div><div class="bar-label xp-label"><span>EXP</span><b><span data-bind="xp">0</span><em> / <span data-bind="xpNeeded">40</span></em></b></div><div class="meter experience"><i data-bar="xp"></i></div></div>
-    <div class="stat-grid expanded-stats">${[['attack','sword','攻击决定单次伤害'],['maxHp','heart','生命上限'],['defense','shield','防御减少受到的伤害'],['crit','spark','暴击造成 1.8 倍伤害，上限 80%'],['attackSpeed','speed','100 速度约每 1.9 秒出手；速度上限 400'],['luck','leaf','幸运提高装备、素材、图纸掉率及装备品质'],['dodge','shield','闪避敌人攻击的概率，上限 60%'],['lifesteal','heart','按实际造成的伤害回血，上限 50%']].map(([id,ic,tip])=>`<div title="${tip}">${icon(ic)}<b data-bind="${id}">0</b><span>${id==='attackSpeed'?'速度':id==='attack'&&state.heroClass==='tamer'?'契约攻击':STAT_LABELS[id]}</span></div>`).join('')}</div>
-    <div class="equipment"><div class="section-label">随身装备 <button class="text-button" data-action="nav" data-view="equipment">仓库 / 制作 ${icon('chevron')}</button></div>${state.heroClass==='tamer'?'<button class="beast-sidebar-link" data-action="nav" data-view="beasts">契约召唤 · 前往伙伴营地 →</button>':''}${EQUIPMENT_SLOTS.filter(slot=>state.heroClass!=='tamer'||slot.id!=='weapon').map(({id,icon:ic,starter,bonus})=>`<div class="gear-row"><span class="gear-icon ${id}">${icon(ic)}</span><div class="gear-info"><b><span data-gear-name="${id}">${starter}</span> <small data-gear-level="${id}">+0</small></b><span>${bonus} <em>·</em> ${icon('coin')} <span data-gear-cost="${id}">150</span></span><span class="gear-materials" data-gear-materials="${id}"></span></div><button class="upgrade-button" data-action="upgrade" data-id="${id}" aria-label="强化${starter}栏位" title="消耗金币与素材强化，仅归当前职业的栏位所有">${icon('plus')}</button></div>`).join('')}<p class="equipment-note">强化归当前职业 · 替换装备保留强化</p></div>
+    <div class="stat-grid expanded-stats">${[['attack','sword','攻击决定单次伤害'],['maxHp','heart','生命上限'],['defense','shield','防御减少受到的伤害'],['crit','spark','暴击造成 1.8 倍伤害，上限 80%'],['attackSpeed','speed','100 速度约每 1.9 秒出手；速度上限 400'],['luck','leaf','幸运提高装备、素材、图纸掉率及装备品质'],['dodge','shield','闪避敌人攻击的概率，上限 60%'],['lifesteal','heart','按实际造成的伤害回血，上限 50%']].map(([id,ic,tip])=>`<div title="${tip}">${icon(ic)}<b data-bind="${id}">0</b><span>${id==='attackSpeed'?'速度':STAT_LABELS[id]}</span></div>`).join('')}</div>
+    <div class="equipment"><div class="section-label">随身装备 <button class="text-button" data-action="nav" data-view="equipment">仓库 / 制作 ${icon('chevron')}</button></div><button class="beast-sidebar-link" data-action="nav" data-view="beasts">宠物伙伴 · 前往营地 →</button>${EQUIPMENT_SLOTS.map(({id,icon:ic,starter,bonus})=>`<div class="gear-row"><span class="gear-icon ${id}">${icon(ic)}</span><div class="gear-info"><b><span data-gear-name="${id}">${starter}</span> <small data-gear-level="${id}">+0</small></b><span>${bonus} <em>·</em> ${icon('coin')} <span data-gear-cost="${id}">150</span></span><span class="gear-materials" data-gear-materials="${id}"></span></div><button class="upgrade-button" data-action="upgrade" data-id="${id}" aria-label="强化${starter}栏位" title="消耗金币与素材强化，仅归当前职业的栏位所有">${icon('plus')}</button></div>`).join('')}<p class="equipment-note">强化归当前职业 · 替换装备保留强化</p></div>
     </section><button class="journal-card" data-action="achievements"><span class="journal-icon">${icon('book')}</span><span><strong>小小冒险，大大成就</strong><small>翻开花花的冒险手记</small></span>${icon('arrow')}</button><div class="sidebar-quote">“ 总有一种味道，<br>值得翻山越岭。 ”<span>— 花花的第一篇日记</span></div>`;
   paintArt(document.getElementById('sidebar'));
 }
@@ -91,7 +93,7 @@ function adventureView() {
     <div id="encounter-notice">${encounterNotice()}</div><div id="journey-panel">${journeyPanel()}</div><div class="battle-frame"><div class="battle-top"><div><span class="zone-number" data-bind="stage">01</span><b id="battle-location">林间小径</b><span class="battle-divider"></span><span class="wave-label">自由探索 · 自动拾取</span></div><span class="encounter-tag" data-bind="encounter-mode">野外探索</span></div>
       <div class="scene-wrap"><canvas id="battle-canvas" width="800" height="360" role="img" aria-label="爆米花勇士与美食魔物自动进行回合战斗的像素森林场景"></canvas><div class="scene-status"><span class="live-dot"></span><span data-bind="battle-status">自动战斗中</span><small>ROUND <b data-bind="round">01</b></small></div><div class="scene-weather">✦ <span id="zone-weather">黄油香气弥漫</span></div><div class="actor-label hero-label"><span>花花</span><small>Lv.<b data-bind="level">1</b></small></div><div class="actor-label enemy-label"><span id="enemy-name">黄油小菇</span><small id="enemy-hp">38 / 38</small></div><div class="travel-message" id="travel-message"></div><div class="scene-caption">THE LITTLE ADVENTURE OF A POPCORN</div></div>
       <div class="battle-controls"><div class="turn-indicator">${icon('sword')}<span data-bind="turn">花花准备出手</span><span class="auto-tag">AUTO</span></div><div class="control-actions"><button class="speed-control" data-action="speed" title="切换战斗速度">${icon('speed')} <b data-bind="speed">1</b>×</button><span></span><button class="pause-control" data-action="pause">${icon('pause')}<span data-bind="pause-label">暂停</span></button></div></div>
-    </div><div id="beast-battle-strip" class="beast-battle-strip" ${state.heroClass==='tamer'?'':'hidden'}><div><b data-beast-battle-status>${beastBattleStatus()}</b><small id="beast-health-label"></small></div><button class="text-button" data-action="nav" data-view="beasts">契约兽营地 ${icon('arrow')}</button></div><div class="journey-strip"><span class="journey-leaf">${icon('leaf')}</span><p><b>美味就在下一站</b><span id="journey-tip">击败森林首领，向海盐海岸出发。</span></p><label class="switch-label"><span>自动前往新区</span><input type="checkbox" id="auto-travel" ${state.autoTravel?'checked':''}><span class="switch"></span></label></div>
+    </div><div id="beast-battle-strip" class="beast-battle-strip" ><div><b data-beast-battle-status>${beastBattleStatus()}</b><small id="beast-health-label"></small></div><button class="text-button" data-action="nav" data-view="beasts">宠物营地 ${icon('arrow')}</button></div><div class="journey-strip"><span class="journey-leaf">${icon('leaf')}</span><p><b>美味就在下一站</b><span id="journey-tip">击败森林首领，向海盐海岸出发。</span></p><label class="switch-label" title="开启后自动进入已发现的 Boss 房；胜利保留开关，失败或主动撤退后关闭，离线也生效"><span>主动挑战 Boss</span><input type="checkbox" id="auto-boss" ${state.autoBoss?'checked':''}><span class="switch"></span></label><label class="switch-label"><span>自动前往新区</span><input type="checkbox" id="auto-travel" ${state.autoTravel?'checked':''}><span class="switch"></span></label></div>
     </section>
     <section class="adventure-bottom"><div class="flavor-preview"><div class="section-heading"><h3>${icon('leaf')} 今日的美味灵感</h3><button class="text-button" data-action="nav" data-view="kitchen">前往厨房 ${icon('arrow')}</button></div><div class="recipe-preview-grid">${RECIPES.slice(0,2).map(r=>recipeCard(r,true)).join('')}</div></div><section class="log-panel"><div class="section-heading"><h3>${icon('book')} 冒险见闻</h3><span class="live-label">LIVE</span></div><div id="battle-log" class="battle-log" aria-label="战斗与拾取记录"></div><div class="log-summary">今天也是满载而归的一天 <span>✦</span></div></section></section>`;
 }
@@ -99,44 +101,50 @@ function kitchenView() {
   return `${heading('THE FLAVOR LAB','风味厨房<span class="chapter-badge">美味研发中</span>','把沿途收集的调料，变成属于你的独家风味。')}<div class="kitchen-banner"><span class="kitchen-pot">${art('ingredient','butter',92,76,3)}</span><div><span class="eyebrow">A RECIPE FOR ADVENTURE</span><h3>每一种风味，都让你更强大。</h3><p>调料由战斗自动收集。研发配方可永久提升属性，每种风味最高 5 级。</p></div><span class="banner-spark">✦</span></div><div class="inventory-strip">${INGREDIENTS.map(i=>`<div>${art('ingredient',i.id,44,42,1.2)}<span>${i.name}<b data-stock="${i.id}">${state.inventory[i.id]}</b></span></div>`).join('')}</div><div class="recipes-grid">${RECIPES.map(r=>recipeCard(r)).join('')}</div><p class="page-hint">${icon('leaf')} 所有已研发风味同时生效，无需装备。新调料在新的旅途区域中发现。</p>`;
 }
 function beastStatus(beast) {
-  if (beast.reviveAt) return `休养中 · ${countdown(beast.reviveAt)} 后恢复`;
+  if (beast.reviveAt) return `等待复活 · ${countdown(beast.reviveAt)} · 现实时间`;
   if (state.activeBeast === beast.id) return '正在出战 · 优先承受攻击';
-  return '准备就绪 · 等待召唤';
+  const position=state.petFormation.indexOf(beast.id);
+  return position>=0 ? `编队第 ${position+1} 位 · 等待接替出战` : '在营地待命 · 编入队伍后出战';
 }
 function beastBattleStatus() {
-  if (state.heroClass !== 'tamer') return '转职驯兽师，让伙伴一起冒险';
-  if (state.phase === 'rest') return '花花正在休养，伙伴在营地等待';
-  if (state.activeBeast) return `${beastName(state.beasts[state.activeBeast])}守护中`;
-  if (state.summonCooldown) return `召唤中 · 约 ${(state.summonCooldown / state.speed / 1000).toFixed(1)} 秒 · 花花承伤`;
-  return '暂无可出战伙伴 · 花花以 10% 攻击力自保，等待伙伴恢复';
-}
-function beastLoadoutCard() {
-  return `<article class="item-card beast-slot"><div class="item-top"><span>${icon('leaf')} 契约召唤</span><b>驯兽师专属</b></div><h3>以伙伴代替武器</h3><p class="item-meta">武器与武器强化不生效</p><p class="beast-explanation">出战获得经验，满级消耗素材进阶；同种晶体可额外强化。Boss 宝宝从初始形态就能战斗。其他职业的装备独立保管，需先放回共享仓库才能转交。</p><button class="button secondary" data-action="nav" data-view="beasts">前往契约兽营地</button></article>`;
+  if (state.phase === 'rest') return '花花正在休养，宠物在营地等待';
+  if (state.activeBeast) return `${beastName(state.beasts[state.activeBeast])}并肩作战${state.heroClass==='tamer'&&state.petBuffMs?' · 鼓舞生效中':''}`;
+  if (state.summonCooldown) return `召唤中 · 约 ${(state.summonCooldown / state.speed / 1000).toFixed(1)} 秒 · 花花继续战斗`;
+  return state.petFormation.length ? '编队待命 · 自动召唤已恢复的伙伴' : '暂无宠物编队 · 前往营地安排伙伴';
 }
 function beastExperienceStatus(beast) {
-  return beast.level >= beastLevelCap(beast) ? beast.growth >= BEAST_MAX_GROWTH ? '已达到最高等级' : '等级已满 · 消耗素材进阶后继续升级' : '战斗经验 ' + beast.xp + ' / ' + beastXpNeeded(beast.level);
+  return beast.level >= 100 ? '已达到最高等级' : `战斗经验 ${beast.xp} / ${beastXpNeeded(beast.level)}`;
+}
+function formationView() {
+  return `<section class="formation-panel"><div class="section-heading"><h3>${icon('heart')} 冒险编队</h3><span class="muted-caption">${state.petFormation.length} / ${MAX_PET_FORMATION} 只伙伴</span></div><p class="formation-note">按 1 → 4 的顺序接替出战，跳过复活中的伙伴。全队倒下时由角色继续战斗，队员恢复后自动召唤。调整顺序不打断当前宠物出战。</p><div class="formation-grid">${Array.from({length:MAX_PET_FORMATION},(_,i)=>{
+    const id=state.petFormation[i],pet=state.beasts[id];
+    return `<article class="formation-slot ${id===state.activeBeast?'active-beast':''} ${pet?'':'empty-formation'}"><span class="formation-number">${String(i+1).padStart(2,'0')}</span>${pet?`${art('beast',beastSpecies(pet),100,90,1.6,`data-growth="${pet.growth}"`)}<h4>${beastName(pet)}</h4><p data-beast-status="${id}">${beastStatus(pet)}</p><small data-beast-hp="${id}">生命 ${pet.hp} / ${beastStats(state,id).maxHp}</small><div class="formation-controls"><button class="button secondary" data-action="formation-move" data-id="${id}" data-direction="-1" aria-label="将${beastName(pet)}前移" ${i===0?'disabled':''}>前移</button><button class="button secondary" data-action="formation-move" data-id="${id}" data-direction="1" aria-label="将${beastName(pet)}后移" ${i===state.petFormation.length-1?'disabled':''}>后移</button><button class="text-button" data-action="formation-remove" data-id="${id}">移出</button></div>`:'<span class="formation-empty-mark">＋</span><h4>等待伙伴加入</h4><p>在下方宠物卡片中<br>点击「编入队伍」</p>'}</article>`;
+  }).join('')}</div></section>`;
 }
 function beastsView() {
-  const beasts=Object.values(state.beasts);
-  return `${heading('A BOND BEYOND THE BATTLE','契约兽营地','从第一次并肩作战，到一起长大。',`<span class="collection-count"><b>${beasts.length}</b> / ${Object.keys(MONSTERS).length} 已契约</span>`)}
-  <div class="beast-banner"><div>${art('hero','tamer',100,105,2.5)}<div><h3>空手结契，与魔物并肩</h3><p>驯兽师击败普通魔物有 ${(contractChance(state)*100).toFixed(0)}% 概率签约（基础 20%，幸运可提高）；重复契约获得 1 枚同种晶体，重复 Boss 契约获得 5 枚。</p><p>伙伴倒下后休养现实时间 10 分钟；自动召唤下一只可用伙伴约需 2.85 秒（1×）。全部伙伴阵亡时，花花以 10% 攻击力自保。</p></div></div><div class="beast-banner-footer"><b data-beast-battle-status>${beastBattleStatus()}</b><button class="button secondary" data-action="classes">${state.heroClass==='tamer'?'切换职业':'转职驯兽师'}</button></div></div>
-  <div class="system-note">${icon('heart')} 出战伙伴通过胜利独立升级，每级提升基础属性 6%；初始上限 Lv.5，满级消耗素材进阶，每阶增加 15% 基础属性并解锁 5 级上限，最高 Lv.30。Boss 宝宝即可战斗，进阶后逐步改变形态。</div>
+  const beasts=Object.values(state.beasts), eggs=Object.entries(state.eggs).filter(([,n])=>n>0);
+  return `${heading('SMALL EGGS, LIFELONG FRIENDS','宠物营地','每一次破壳，都是一段新的同行。',`<span class="collection-count"><b>${beasts.length}</b> 只伙伴 · 全职业共享</span>`)}
+  <div class="beast-banner"><div>${art('hero','tamer',100,105,2.5)}<div><h3>从一枚蛋，走向共同的冒险</h3><p>击败普通怪物有 ${(petEggChance(state)*100).toFixed(2)}% 概率掉蛋，Boss 为 ${(petEggChance(state,true)*100).toFixed(2)}%。普通蛋孵化 1 小时，Boss 蛋 4 小时；每只随机生成 80%–120% 资质及特殊技能。</p><p>宠物战斗升级至 Lv.100，也可独立消耗素材进化 5 次，每次外观都会变化。倒下后现实时间 1 小时复活。最多编入四只宠物，按顺序接替出战，自动跳过复活中的伙伴。</p></div></div><div class="beast-banner-footer"><b data-beast-battle-status>${beastBattleStatus()}</b><span>暂停、倍速与关闭页面均不影响孵化和复活</span></div></div>
+  ${formationView()}<div class="section-heading"><h3>${icon('clock')} 孵化营帐</h3><span class="muted-caption">${state.incubators.length} / ${MAX_INCUBATORS} 个孵化位使用中</span></div>
+  <div class="incubator-grid">${Array.from({length:MAX_INCUBATORS},(_,i)=>{const egg=state.incubators[i];return egg?`<article class="incubator-card"><span class="egg-art ${MONSTERS[egg.species].boss?'boss-egg':''}">✦</span><h3>${MONSTERS[egg.species].name}的蛋</h3><p>${MONSTERS[egg.species].boss?'Boss 蛋 · 4 小时':'普通蛋 · 1 小时'}</p><b data-hatch-countdown="${egg.id}">${countdown(egg.hatchAt)}</b><small>孵化完成自动加入营地</small></article>`:`<article class="incubator-card empty-incubator"><span class="egg-art">＋</span><h3>空闲孵化位</h3><p>从下方选择一枚蛋开始孵化</p></article>`;}).join('')}</div>
+  <div class="egg-inventory">${eggs.length?eggs.map(([id,n])=>`<div><span>${MONSTERS[id].name}的蛋 <b>×${n}</b><small>${MONSTERS[id].boss?'Boss · 4 小时 · 2 个随机技能':'普通 · 1 小时 · 1 个随机技能'}</small></span><button class="button secondary" data-action="hatch" data-id="${id}" ${state.incubators.length>=MAX_INCUBATORS?'disabled':''}>开始孵化</button></div>`).join(''):'<p>还没有待孵化的蛋。所有职业击败怪物都有极低概率获得对应宠物蛋。</p>'}</div>
+  <div class="section-heading"><h3>${icon('heart')} 我的宠物</h3><span class="muted-caption">等级成长与素材进化相互独立</span></div>
   ${beasts.length?`<div class="beast-grid">${beasts.map(beast=>{
-    const id=beast.id, monster=MONSTERS[id], st=beastStats(state,id), cost=beastAdvanceCost(id,beast.growth), form=beastForm(beast), cap=beastLevelCap(beast);
+    const id=beast.id, species=beastSpecies(beast), monster=MONSTERS[species], st=beastStats(state,id), cost=beastAdvanceCost(species,beast.growth), form=beastForm(beast);
     return `<article class="beast-card ${monster.boss?'boss-baby':''} ${state.activeBeast===id?'active-beast':''}">
-    <div class="item-top"><span>${form?form.name:'契约伙伴'}</span><b>${state.preferredBeast===id?'优先召唤':'自动轮换'}</b></div>
-    <div class="beast-portrait">${art('beast',id,126,100,monster.boss?1.8:2.2,`data-growth="${beast.growth}"`)}<span>${beast.growth} / ${BEAST_MAX_GROWTH} 阶</span></div>
-    <h3>${beastName(beast)} <small>+${beast.rank}</small></h3>
-    <div class="beast-level"><b>Lv.${beast.level} <small>/ ${cap}</small></b><span data-beast-xp="${id}">${beastExperienceStatus(beast)}</span></div>
-    <div class="meter experience beast-xp"><i data-beast-xp-bar="${id}" style="width:${beast.level===cap?100:beast.xp/beastXpNeeded(beast.level)*100}%"></i></div>
-    ${form?`<div class="beast-form-track" aria-label="Boss 形态成长">${BOSS_FORMS.map(stage=>`<span class="${form.id===stage.id?'current':beast.growth>=stage.growth?'reached':''}">${stage.name.replace('形态','')}<small>${stage.growth} 阶</small></span>`).join('')}</div>`:''}
+    <div class="item-top"><span>${monster.boss?'Boss 宠物':'普通宠物'} · ${form.name}</span><b>${state.preferredBeast===id?'已选出战':'营地伙伴'}</b></div>
+    <div class="beast-portrait">${art('beast',species,126,112,monster.boss?1.8:2.2,`data-growth="${beast.growth}"`)}<span>进化 ${beast.growth} / 5</span></div><h3>${beastName(beast)}</h3>
+    <div class="beast-level"><b>Lv.${beast.level} <small>/ 100</small></b><span>${beastExperienceStatus(beast)}</span></div><div class="meter experience beast-xp"><i style="width:${beast.level===100?100:beast.xp/beastXpNeeded(beast.level)*100}%"></i></div>
+    <div class="beast-form-track">${BOSS_FORMS.map(stage=>`<span class="${form.id===stage.id?'current':beast.growth>=stage.growth?'reached':''}">${stage.name.replace('形态','')}<small>${stage.growth} 阶</small></span>`).join('')}</div>
     <p class="beast-status" data-beast-status="${id}">${beastStatus(beast)}</p><div class="meter health beast-health"><i data-beast-bar="${id}" style="width:${beast.hp/st.maxHp*100}%"></i></div><p class="beast-hp" data-beast-hp="${id}">生命 ${beast.hp} / ${st.maxHp}</p>
-    <div class="beast-properties"><span>攻击 <b>${st.attack}</b></span><span>防御 <b>${st.defense}</b></span><span>速度 <b>${st.speed}</b></span></div>
-    <div class="beast-crystals">同种晶体 <b data-beast-crystals="${id}">${beast.crystals}</b><small>每次强化增加基础攻击、生命与防御的 12%</small></div>
-    <div class="beast-actions"><button class="button secondary" data-action="beast-prefer" data-id="${id}">${state.preferredBeast===id?'已优先':'优先召唤'}</button><button class="button" data-action="beast-upgrade" data-id="${id}">${beast.rank>=BEAST_MAX_RANK?'强化已满级':`强化 · ${beastUpgradeCost(beast)} 晶体`}</button></div>
-    <div class="beast-feeding"><h4>${cost?`进阶至 ${beast.growth+1} 阶 · 等级上限 Lv.${cap+5}`:'已完成全部进阶'}</h4><p>${cost?`需先战斗达到 Lv.${cap}，再消耗素材进阶。${monster.boss?'0 阶宝宝 → 1 阶幼年 → 3 阶成熟 → 5 阶觉醒。':'进阶提升攻击、生命上限和防御。'}`:'继续通过战斗成长至 Lv.30。'}休养中的伙伴进阶不会提前复活。</p>
-    ${cost?`<div class="craft-cost">${Object.entries(cost).map(([key,n])=>`<span>${MATERIALS.find(m=>m.id===key).name} <b data-material="${key}">${state.materials[key]}</b> / ${n}</span>`).join('')}</div><button class="button secondary" data-action="beast-feed" data-id="${id}">消耗素材进阶</button>`:''}</div></article>`;
-  }).join('')}</div>`:`<div class="empty-state">${icon('leaf')}<h3>第一位伙伴，正在等你。</h3><p>Lv.1 即可转职驯兽师，首次转职获得黄油小菇。通过战斗与进阶，一起成长。</p><button class="button" data-action="classes">选择驯兽师</button></div>`}`;
+    <div class="beast-properties"><span>攻击 <b data-pet-stat="${id}:attack">${st.attack}</b></span><span>防御 <b data-pet-stat="${id}:defense">${st.defense}</b></span><span>速度 <b data-pet-stat="${id}:speed">${st.speed}</b></span></div>
+    <p class="pet-traits">资质 ${Object.entries(beast.traits).map(([key,n])=>`${STAT_LABELS[key]} ${n}%`).join(' · ')}</p>
+    <div class="pet-skills">${beast.skills.map(key=>{const skill=PET_SKILLS.find(x=>x.id===key);return `<div><b>${icon('spark')} ${skill.name}</b><p>${skill.description}</p></div>`;}).join('')}</div>
+    ${beast.rank?`<p class="pet-traits">旧存档强化 +${beast.rank} 的属性加成已保留</p>`:''}
+    <div class="beast-actions"><button class="button secondary" data-action="${state.petFormation.includes(id)?'formation-remove':'formation-add'}" data-id="${id}">${state.petFormation.includes(id)?'移出队伍':state.petFormation.length>=MAX_PET_FORMATION?'编队已满':'编入队伍'}</button>${state.petFormation.includes(id)?`<button class="button" data-action="beast-prefer" data-id="${id}">${state.preferredBeast===id?'已选出战':beast.reviveAt?'等待复活':'立即出战'}</button>`:''}</div>
+    <div class="beast-feeding"><h4>${cost?`进化至 ${beast.growth+1} 阶 · ${BOSS_FORMS[beast.growth+1].name}`:'已完成全部进化'}</h4><p>${cost?'每阶增加 40% 基础属性并改变外观；不受等级限制，进化不会治疗或提前复活。':'继续通过战斗成长至 Lv.100。'}</p>
+    ${cost?`<div class="craft-cost">${Object.entries(cost).map(([key,n])=>`<span>${MATERIALS.find(m=>m.id===key).name} <b data-material="${key}">${state.materials[key]}</b> / ${n}</span>`).join('')}</div><button class="button secondary" data-action="beast-feed" data-id="${id}">消耗素材进化</button>`:''}</div></article>`;
+  }).join('')}</div>`:'<div class="empty-state"><h3>第一位伙伴，正在破壳的路上。</h3><p>击败魔物收集宠物蛋，在上方孵化后即可选择出战。</p></div>'}`;
 }
 function syncBeasts() {
   setText('[data-beast-battle-status]',beastBattleStatus());
@@ -144,15 +152,18 @@ function syncBeasts() {
     const st=beastStats(state,beast.id);
     setText(`[data-beast-status="${beast.id}"]`,beastStatus(beast));
     setText(`[data-beast-hp="${beast.id}"]`,`生命 ${beast.hp} / ${st.maxHp}`);
-    setText(`[data-beast-crystals="${beast.id}"]`,beast.crystals);
+    for(const key of ['attack','defense','speed'])setText(`[data-pet-stat="${beast.id}:${key}"]`,st[key]);
     document.querySelectorAll(`[data-beast-bar="${beast.id}"]`).forEach(el=>el.style.width=`${beast.hp/st.maxHp*100}%`);
   }
+  for(const egg of state.incubators)setText(`[data-hatch-countdown="${egg.id}"]`,countdown(egg.hatchAt));
   const active=state.beasts[state.activeBeast];
-  setText('#beast-health-label',active?`Lv.${active.level} · ${active.growth} 阶 · 生命 ${active.hp} / ${beastStats(state,active.id).maxHp} · ${beastExperienceStatus(active)}`:'');
-  const strip=document.getElementById('beast-battle-strip'); if(strip)strip.hidden=state.heroClass!=='tamer';
-  document.querySelectorAll('[data-action="beast-prefer"]').forEach(el=>el.disabled=!ownsGame||state.preferredBeast===el.dataset.id);
-  document.querySelectorAll('[data-action="beast-upgrade"]').forEach(el=>{const b=state.beasts[el.dataset.id];el.disabled=!ownsGame||b.rank>=BEAST_MAX_RANK||b.crystals<beastUpgradeCost(b);});
-  document.querySelectorAll('[data-action="beast-feed"]').forEach(el=>{const b=state.beasts[el.dataset.id],cost=beastAdvanceCost(b.id,b.growth);el.disabled=!ownsGame||!cost||b.level<beastLevelCap(b)||Object.entries(cost).some(([id,n])=>state.materials[id]<n);});
+  setText('#beast-health-label',active?`Lv.${active.level} · ${active.growth} 阶 · 生命 ${active.hp} / ${beastStats(state,active.id).maxHp} · ${beastExperienceStatus(active)}`:'最多编入 4 只宠物，倒下后按序接替；现实时间 1 小时复活');
+  document.querySelectorAll('[data-action="formation-add"]').forEach(el=>el.disabled=!ownsGame||state.petFormation.length>=MAX_PET_FORMATION);
+  document.querySelectorAll('[data-action="formation-remove"]').forEach(el=>el.disabled=!ownsGame);
+  document.querySelectorAll('[data-action="formation-move"]').forEach(el=>{const next=state.petFormation.indexOf(el.dataset.id)+Number(el.dataset.direction);el.disabled=!ownsGame||next<0||next>=state.petFormation.length;});
+  document.querySelectorAll('[data-action="beast-prefer"]').forEach(el=>el.disabled=!ownsGame||state.preferredBeast===el.dataset.id||!beastReady(state.beasts[el.dataset.id]));
+  document.querySelectorAll('[data-action="hatch"]').forEach(el=>el.disabled=!ownsGame||state.incubators.length>=MAX_INCUBATORS||!state.eggs[el.dataset.id]);
+  document.querySelectorAll('[data-action="beast-feed"]').forEach(el=>{const b=state.beasts[el.dataset.id],cost=beastAdvanceCost(beastSpecies(b),b.growth);el.disabled=!ownsGame||!cost||Object.entries(cost).some(([id,n])=>state.materials[id]<n);});
 }
 function bestiaryView() {
   const entries=Object.entries(MONSTERS).filter(([,m])=>bestiaryFilter==='all'||(bestiaryFilter==='boss'?m.boss:!m.boss));
@@ -162,9 +173,9 @@ function encounterNotice() {
   if(state.phase==='rest') {
     const loss=state.deathLoss;
     const lost=loss?[...INGREDIENTS.map(m=>[m.name,loss.ingredients[m.id]]),...MATERIALS.map(m=>[m.name,loss.materials[m.id]])].filter(([,amount])=>amount>0).map(([name,amount])=>`${name} −${number(amount)}`).join(' · '):'';
-    return `<div class="encounter-notice revival-notice"><span class="notice-emblem">${icon('heart')}</span><div><b>营火守候 · <span data-bind="revival-countdown">${revivalCountdown()}</span> 后复活</b><p>现实时间 10 分钟，关闭页面也会计时。等级、装备、强化和天赋已保留。</p>${loss?`<p class="loss-detail">本次损失：金币 −${number(loss.gold)}${lost?' · '+lost:''}</p>`:''}</div></div>`;
+    return `<div class="encounter-notice revival-notice"><span class="notice-emblem">${icon('heart')}</span><div><b>营火守候 · <span data-bind="revival-countdown">${revivalCountdown()}</span> 后复活</b><p>本职业现实时间 1 小时后复活，关闭页面也会计时。可切换其他存活职业继续冒险。</p>${loss?`<p class="loss-detail">本次损失：金币 −${number(loss.gold)}${lost?' · '+lost:''}</p>`:''}</div><button class="button secondary" data-action="classes">切换其他职业</button></div>`;
   }
-  if(state.inBoss) return `<div class="encounter-notice boss-notice"><span class="notice-emblem">${icon('flag')}</span><div><b>首领挑战 · ${MONSTERS[ZONES[state.zone].boss].name}</b><p>胜利必掉首领专属装备、素材与制作图纸。</p></div><button class="button secondary" data-action="travel" data-id="${state.zone}">撤回野外</button></div>`;
+  if(state.inBoss) return `<div class="encounter-notice boss-notice"><span class="notice-emblem">${icon('flag')}</span><div><b>首领挑战 · ${MONSTERS[ZONES[state.zone].boss].name}</b><p>重甲减伤 15% · 每 4 次攻击重击 · 生命低于 30% 狂暴。胜利必掉首领装备、素材和图纸。</p></div><button class="button secondary" data-action="travel" data-id="${state.zone}">撤回野外</button></div>`;
   if(state.bossRooms[state.zone]) return `<div class="encounter-notice boss-notice"><span class="notice-emblem">${icon('flag')}</span><div><b>发现隐藏 Boss 房！</b><p>${MONSTERS[ZONES[state.zone].boss].name}正在等待挑战。入口会保留，可准备好后再来。</p></div><button class="button" data-action="boss" data-id="${state.zone}">进入 Boss 房 ${icon('arrow')}</button></div>`;
   return `<div class="encounter-notice"><span class="notice-emblem">${icon('map')}</span><div><b>林间藏着新的奇遇</b><p>持续击败当前区域的魔物，有机会发现隐藏 Boss 房，发现后可手动进入。</p></div></div>`;
 }
@@ -177,7 +188,7 @@ function journeyPanel() {
   }
   if(event && (event.kind!=='flyer'||!flyer)) {
     const meta=JOURNEY_EVENTS[event.kind];
-    const outcome=event.kind==='cache'?(Object.keys(event.materials).length?rewardsText(event.materials):'这次没有找到可用素材。'):event.kind==='hazard'?(event.damage?`生命 −${number(event.damage)}`:'成功避开危险，没有受伤。'):event.kind==='spring'?`生命 +${number(event.healed)}`:'稍作停留，继续旅途。';
+    const outcome=event.kind==='cache'?(Object.keys(event.materials).length?rewardsText(event.materials):'这次没有找到可用素材。'):event.kind==='hazard'?(event.damage?`生命 −${number(event.damage)}`:'成功避开危险，没有受伤。'):event.kind==='campfire'?`角色生命 +${number(event.healed)} · 宠物生命 +${number(event.petHealed||0)}`:event.kind==='spring'?`生命 +${number(event.healed)}`:'稍作停留，继续旅途。';
     html+=`<div class="encounter-notice journey-event"><span class="notice-emblem">${icon(meta.icon)}</span><div><b>旅途奇遇 · ${meta.name}</b><p>${meta.description}</p><p class="event-outcome">${outcome}</p></div></div>`;
   }
   const pending=state.orders.filter(o=>o.deliveredAt===null).length;
@@ -186,11 +197,11 @@ function journeyPanel() {
 }
 function salvageSettingsDialog() {
   const r=state.autoSalvage;
-  showModal(`<div class="eyebrow">A SECOND LIFE FOR EVERY TREASURE</div><h2>自动分解规则</h2><p class="modal-subtitle">同时满足下方所有条件的入库装备会被分解；更高评分装备始终优先穿戴，锁定装备始终保留。</p><div class="salvage-form"><label class="check-setting"><input id="salvage-enabled" type="checkbox" ${r.enabled?'checked':''}>开启自动分解</label><div class="rule-fields"><label>品质上限<select id="salvage-quality">${QUALITIES.map((q,i)=>`<option value="${i}" ${r.maxQuality===i?'selected':''}>${q.name}及以下</option>`).join('')}</select></label><label>装备等级上限<input id="salvage-level" type="number" min="1" max="100" value="${r.maxLevel}"></label></div><fieldset><legend>适用部位（至少选择一个）</legend>${EQUIPMENT_SLOTS.map(slot=>`<label class="check-setting"><input name="salvage-slot" type="checkbox" value="${slot.id}" ${r.slots.includes(slot.id)?'checked':''}>${slot.name}</label>`).join('')}</fieldset><label class="check-setting"><input id="salvage-special" type="checkbox" ${r.includeSpecial?'checked':''}>包含首领专属和图纸制作装备</label><p class="setting-note">保存后处理新获得和换装后入库的装备。现有仓库保持原样，可使用「分解匹配项」批量处理。</p></div><button class="button" data-action="salvage-save">保存规则</button>`);
+  showModal(`<div class="eyebrow">A SECOND LIFE FOR EVERY TREASURE</div><h2>自动分解规则</h2><p class="modal-subtitle">同时满足下方所有条件的入库装备会被分解；更高评分装备始终优先穿戴，锁定装备始终保留。</p><div class="salvage-form"><label class="check-setting"><input id="salvage-enabled" type="checkbox" ${r.enabled?'checked':''}>开启自动分解</label><div class="rule-fields"><label>品质上限<select id="salvage-quality">${QUALITIES.map((q,i)=>`<option value="${i}" ${r.maxQuality===i?'selected':''}>${q.name}及以下</option>`).join('')}</select></label><label>装备等级上限<input id="salvage-level" type="number" min="1" max="100" value="${r.maxLevel}"></label></div><fieldset><legend>适用部位（至少选择一个）</legend>${EQUIPMENT_SLOTS.map(slot=>`<label class="check-setting"><input name="salvage-slot" type="checkbox" value="${slot.id}" ${r.slots.includes(slot.id)?'checked':''}>${slot.name}</label>`).join('')}</fieldset><label class="check-setting"><input id="salvage-special" type="checkbox" ${r.includeSpecial?'checked':''}>包含首领、职业专属和图纸制作装备</label><p class="setting-note">保存后处理新获得和换装后入库的装备。现有仓库保持原样，可使用「分解匹配项」批量处理。</p></div><button class="button" data-action="salvage-save">保存规则</button>`);
 }
 function countdown(deadline) {
   const seconds=Math.max(0,Math.ceil((deadline-Date.now())/1000));
-  return `${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`;
+  return `${seconds>=3600?String(Math.floor(seconds/3600)).padStart(2,'0')+':':''}${String(Math.floor(seconds/60)%60).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`;
 }
 function productDescription(product) {
   return product.materials?rewardsText(product.materials):`Lv.${product.item.level} · ${QUALITIES[product.item.quality].name} · ${Object.entries(itemStats(product.item)).map(([key,value])=>`${STAT_LABELS[key]} +${statValue(key,value)}`).join(' / ')}`;
@@ -222,20 +233,20 @@ function syncFlyer() {
 function itemCard(item, slot, equipped=false) {
   const quality=item?QUALITIES[item.quality]:QUALITIES[0];
   const properties=item?Object.entries(itemStats(item)).map(([key,value])=>`<span>${STAT_LABELS[key]} <b>+${statValue(key,value)}</b></span>`).join(''):'<span>击败魔物或制作装备，自动替换初始装备。</span>';
-  return `<article class="item-card ${equipped?'equipped-card':''}" style="--rarity:${quality.color}"><div class="item-top"><span>${icon(slot.icon)} ${slot.name}</span><b>${item?quality.name:'初始'}</b></div><h3>${item?itemName(item):slot.starter}</h3><p class="item-meta">${item?`Lv.${item.level} · 评分 ${itemScore(item)}`:'尚未获得掉落装备'}${equipped?` · 强化 +${state.gear[slot.id]}`:item.count>1?` · ×${number(item.count)}`:''}</p><div class="item-properties">${properties}</div><div class="item-footer">${item?.bossZone>=0?`${icon('flag')} ${ZONES[item.bossZone].name}专属`:equipped?'更高综合评分自动穿戴':item.locked?'已锁定':'仓库保管中'}${equipped?`<span class="equipped-badge">已穿戴</span>`:''}</div>${equipped&&item?`<button class="text-button unequip-button" data-action="unequip-item" data-id="${slot.id}">放回共享仓库</button>`:''}${!equipped&&item?`<div class="salvage-yield">每件分解：${rewardsText(salvageRewards(item))}</div><div class="item-actions"><button class="button" data-action="equip-item" data-id="${item.id}">装备 1 件</button><button class="button secondary" data-action="item-lock" data-id="${item.id}" ${ownsGame?'':'disabled'}>${icon('lock')} ${item.locked?'解锁':'锁定'}</button><button class="button secondary" data-action="salvage" data-id="${item.id}" ${item.locked||!ownsGame?'disabled':''}>分解 1 件</button>${item.count>1?`<button class="text-button" data-action="salvage-stack" data-id="${item.id}" ${item.locked||!ownsGame?'disabled':''}>分解整组 ×${number(item.count)}</button>`:''}</div>`:''}</article>`;
+  return `<article class="item-card ${equipped?'equipped-card':''}" style="--rarity:${quality.color}"><div class="item-top"><span>${icon(slot.icon)} ${slot.name}</span><b>${item?quality.name:'初始'}</b></div><h3>${item?itemName(item):slot.starter}</h3><p class="item-meta">${item?`Lv.${item.level} · 评分 ${itemScore(item)}`:'尚未获得掉落装备'}${equipped?` · 强化 +${state.gear[slot.id]}`:item.count>1?` · ×${number(item.count)}`:''}</p><div class="item-properties">${properties}</div>${classGear(item)?`<p class="class-gear-note">${CLASSES.find(c=>c.id===classGear(item).heroClass).name}专属 · ${classGear(item).effect}</p>`:''}<div class="item-footer">${item?.bossZone>=0?`${icon('flag')} ${ZONES[item.bossZone].name}专属`:equipped?'更高综合评分自动穿戴':item.locked?'已锁定':'仓库保管中'}${equipped?`<span class="equipped-badge">已穿戴</span>`:''}</div>${equipped&&item?`<button class="text-button unequip-button" data-action="unequip-item" data-id="${slot.id}">放回共享仓库</button>`:''}${!equipped&&item?`<div class="salvage-yield">每件分解：${rewardsText(salvageRewards(item))}</div><div class="item-actions"><button class="button" data-action="equip-item" data-id="${item.id}">装备 1 件</button><button class="button secondary" data-action="item-lock" data-id="${item.id}" ${ownsGame?'':'disabled'}>${icon('lock')} ${item.locked?'解锁':'锁定'}</button><button class="button secondary" data-action="salvage" data-id="${item.id}" ${item.locked||!ownsGame?'disabled':''}>分解 1 件</button>${item.count>1?`<button class="text-button" data-action="salvage-stack" data-id="${item.id}" ${item.locked||!ownsGame?'disabled':''}>分解整组 ×${number(item.count)}</button>`:''}</div>`:''}</article>`;
 }
 function materialInventory() {
   return `<div class="material-grid">${MATERIALS.map(m=>`<div title="${m.note}"><span>${m.name}</span><b data-material="${m.id}">${number(state.materials[m.id])}</b></div>`).join('')}</div>`;
 }
 function enhancementContent() {
-  return `<div class="system-note">${icon('spark')} 每次强化消耗金币与素材；从 +5 继续强化时，还需分解稀有装备获得的风味精华。强化永久保留在栏位中。</div>${materialInventory()}<div class="blueprint-grid enhancement-grid">${EQUIPMENT_SLOTS.filter(slot=>state.heroClass!=='tamer'||slot.id!=='weapon').map(slot=>{
+  return `<div class="system-note">${icon('spark')} 每次强化消耗金币与素材；从 +5 继续强化时，还需分解稀有装备获得的风味精华。强化永久保留在栏位中。</div>${materialInventory()}<div class="blueprint-grid enhancement-grid">${EQUIPMENT_SLOTS.map(slot=>{
     const cost=gearMaterialCost(state,slot.id), rank=state.gear[slot.id];
     return `<article class="blueprint-card"><div class="item-top"><span>${icon(slot.icon)} ${slot.name}强化</span><b>+${rank}</b></div><h3>${state.equipped[slot.id]?itemName(state.equipped[slot.id]):slot.starter}</h3><p>本次提升 ${slot.bonus}</p><div class="craft-cost">${Object.entries(cost).map(([id,n])=>`<span>${MATERIALS.find(m=>m.id===id).name} <b data-material="${id}">${number(state.materials[id])}</b> / ${number(n)}</span>`).join('')}<span>金币 <b data-bind="gold">${number(state.gold)}</b> / ${number(gearCost(state,slot.id))}</span></div><button class="button" data-action="upgrade" data-id="${slot.id}">${rank>=100?'已满级':`强化至 +${rank+1}`}</button></article>`;
   }).join('')}</div>`;
 }
 function salvageRuleSummary() {
   const r=state.autoSalvage;
-  return r.enabled?`${QUALITIES[r.maxQuality].name}及以下 · Lv.${r.maxLevel}及以下 · ${r.slots.map(id=>EQUIPMENT_SLOTS.find(s=>s.id===id).name).join(' / ')}${r.includeSpecial?' · 包含首领与制作装备':' · 保留首领与制作装备'}`:'尚未开启；设置品质、等级和部位，让闲置战利品自动变成素材。';
+  return r.enabled?`${QUALITIES[r.maxQuality].name}及以下 · Lv.${r.maxLevel}及以下 · ${r.slots.map(id=>EQUIPMENT_SLOTS.find(s=>s.id===id).name).join(' / ')}${r.includeSpecial?' · 包含首领与制作装备':' · 保留首领、职业专属与制作装备'}`:'尚未开启；设置品质、等级和部位，让闲置战利品自动变成素材。';
 }
 function warehouseContent() {
   const list=state.warehouse.filter(item=>warehouseFilter==='all'||item.slot===warehouseFilter).sort((a,b)=>itemScore(b)-itemScore(a));
@@ -246,22 +257,26 @@ function warehouseContent() {
 function craftingContent() {
   return `<div class="material-grid">${MATERIALS.map(m=>`<div title="${m.note}"><span>${m.name}</span><b data-material="${m.id}">${number(state.materials[m.id])}</b></div>`).join('')}</div><div class="blueprint-grid">${BLUEPRINTS.map(b=>{
     const known=state.blueprints.includes(b.id), cost=craftingCost(state,b), slot=EQUIPMENT_SLOTS.find(s=>s.id===b.slot);
-    const preview={slot:b.slot,level:cost.level,quality:b.quality,affix:b.affix,bossZone:b.bossZone};
-    return `<article class="blueprint-card ${known?'':'unknown-blueprint'}"><div class="item-top"><span>${icon('book')} ${b.bossZone>=0?'首领图纸':'制作图纸'}</span><b style="color:${QUALITIES[b.quality].color}">${QUALITIES[b.quality].name}</b></div><h3>${b.name}</h3><p>${slot.name} · Lv.${cost.level} · 成品评分 ${itemScore(preview)}</p><div class="item-properties">${Object.entries(itemStats(preview)).map(([key,value])=>`<span>${STAT_LABELS[key]} <b>+${statValue(key,value)}</b></span>`).join('')}</div><div class="craft-cost">${Object.entries(cost.materials).map(([key,quantity])=>`<span>${MATERIALS.find(m=>m.id===key).name} <b data-material="${key}">${number(state.materials[key])}</b> / ${quantity}</span>`).join('')}<span>${INGREDIENTS.find(i=>i.id===b.ingredient).name} <b data-stock="${b.ingredient}">${number(state.inventory[b.ingredient])}</b> / ${cost.ingredient}</span><span>金币 ${cost.gold}</span></div><button class="button ${known?'':'secondary'}" data-action="craft" data-id="${b.id}" ${known?'':'disabled'}>${known?'制作装备':`${icon('lock')} ${b.bossZone>=0?'击败对应首领获得':'击败普通魔物获得'}`}</button></article>`;
+    const preview={slot:b.slot,level:cost.level,quality:b.quality,affix:b.affix,bossZone:b.bossZone,classGearId:b.classGearId};
+    return `<article class="blueprint-card ${known?'':'unknown-blueprint'}"><div class="item-top"><span>${icon('book')} ${b.bossZone>=0?'首领图纸':'制作图纸'}</span><b style="color:${QUALITIES[b.quality].color}">${QUALITIES[b.quality].name}</b></div><h3>${b.name}</h3>${classGear(preview)?`<p class="class-gear-note">${CLASSES.find(c=>c.id===classGear(preview).heroClass).name}专属 · ${classGear(preview).effect}</p>`:''}<p>${slot.name} · Lv.${cost.level} · 成品评分 ${itemScore(preview)}</p><div class="item-properties">${Object.entries(itemStats(preview)).map(([key,value])=>`<span>${STAT_LABELS[key]} <b>+${statValue(key,value)}</b></span>`).join('')}</div><div class="craft-cost">${Object.entries(cost.materials).map(([key,quantity])=>`<span>${MATERIALS.find(m=>m.id===key).name} <b data-material="${key}">${number(state.materials[key])}</b> / ${quantity}</span>`).join('')}<span>${INGREDIENTS.find(i=>i.id===b.ingredient).name} <b data-stock="${b.ingredient}">${number(state.inventory[b.ingredient])}</b> / ${cost.ingredient}</span><span>金币 ${cost.gold}</span></div><button class="button ${known?'':'secondary'}" data-action="craft" data-id="${b.id}" ${known?'':'disabled'}>${known?'制作装备':`${icon('lock')} ${b.bossZone>=0?'击败对应首领获得':'击败普通魔物获得'}`}</button></article>`;
   }).join('')}</div><p class="page-hint">图纸永久保留，可反复制作。成品等级随角色提升，最高 Lv.40；更好的成品会自动穿戴。</p>`;
 }
 function equipmentView() {
   const total=state.warehouse.reduce((sum,item)=>sum+item.count,0);
-  return `${heading('LITTLE TREASURES, BIG POSSIBILITIES','装备工坊','当前职业独立穿戴，闲置装备放进所有职业共享的仓库。')}<div class="system-note">${icon('check')} 按攻击、生存与特殊属性的综合评分自动换装；同分保留当前装备。栏位强化归当前职业；仓库装备可手动穿戴，其他职业正在使用的装备不会被替换或分解。</div><div class="section-heading"><h3>${icon('shield')} 正在穿戴</h3><span class="muted-caption">${state.heroClass==='tamer'?'契约兽 · 防具 · 两件饰品':'武器 · 防具 · 两件饰品'}</span></div><div class="item-grid loadout-grid">${EQUIPMENT_SLOTS.map(slot=>state.heroClass==='tamer'&&slot.id==='weapon'?beastLoadoutCard():itemCard(state.equipped[slot.id],slot,true)).join('')}</div><div class="filter-tabs equipment-tabs">${[['warehouse',`装备仓库 · ${number(total)}`],['upgrade','装备强化'],['craft',`图纸制作 · ${state.blueprints.length}/${BLUEPRINTS.length}`]].map(([id,label])=>`<button class="${equipmentTab===id?'selected':''}" data-action="equipment-tab" data-id="${id}">${label}</button>`).join('')}</div>${equipmentTab==='warehouse'?warehouseContent():equipmentTab==='upgrade'?enhancementContent():craftingContent()}`;
+  return `${heading('LITTLE TREASURES, BIG POSSIBILITIES','装备工坊','当前职业独立穿戴，闲置装备放进所有职业共享的仓库。')}<div class="system-note">${icon('check')} 按攻击、生存与特殊属性的综合评分自动换装；同分保留当前装备。栏位强化归当前职业；仓库装备可手动穿戴，其他职业正在使用的装备不会被替换或分解。</div><div class="section-heading"><h3>${icon('shield')} 正在穿戴</h3><span class="muted-caption">武器 · 防具 · 两件饰品</span></div><div class="item-grid loadout-grid">${EQUIPMENT_SLOTS.map(slot=>itemCard(state.equipped[slot.id],slot,true)).join('')}</div><div class="filter-tabs equipment-tabs">${[['warehouse',`装备仓库 · ${number(total)}`],['upgrade','装备强化'],['craft',`图纸制作 · ${state.blueprints.length}/${BLUEPRINTS.length}`]].map(([id,label])=>`<button class="${equipmentTab===id?'selected':''}" data-action="equipment-tab" data-id="${id}">${label}</button>`).join('')}</div>${equipmentTab==='warehouse'?warehouseContent():equipmentTab==='upgrade'?enhancementContent():craftingContent()}`;
 }
 function talentsView() {
-  return `${heading('GROW IN YOUR OWN WAY','天赋树','每升一级获得 1 点天赋，按自己的节奏培养花花。',`<span class="talent-points">可用天赋点 <b data-bind="talent-points">${talentPoints(state)}</b></span>`)}<div class="system-note">${icon('spark')} 每个职业独立获得与分配天赋点。初始赠送 1 点，每次提升消耗 1 点，前置达到 3 级解锁下一层。</div><div class="talent-tree">${['锋芒','守护','奇遇'].map((branch,i)=>`<section class="talent-branch branch-${i}"><div class="branch-heading">${icon(['sword','shield','leaf'][i])}<h3>${branch}</h3><p>${['把每一击变得更有力量','让每一步走得更加稳健','更轻快的步伐，更多的收获'][i]}</p></div>${TALENTS.filter(t=>t.branch===branch).map(t=>{
-    const rank=state.talents[t.id]||0, parent=TALENTS.find(x=>x.id===t.parent);
-    return `${parent?'<div class="talent-connector">↓</div>':''}<article class="talent-node ${rank?'learned':''}"><span class="talent-tier">${rank} / ${t.max}</span><h3>${t.name}</h3><p>每级${STAT_LABELS[t.stat]} +${statValue(t.stat,t.bonus)}</p><div class="talent-ranks">${Array.from({length:t.max},(_,n)=>`<i class="${n<rank?'filled':''}"></i>`).join('')}</div><small>${parent?`前置：${parent.name} ${t.required} 级`:'基础天赋 · 可直接学习'}</small><button class="button secondary" data-action="talent" data-id="${t.id}" ${talentAvailable(state,t)?'':'disabled'}>${rank===t.max?'已满级':`学习 · 1 点`}</button></article>`;
-  }).join('')}</section>`).join('')}</div>`;
+  const branches=['锋芒','守护','奇遇','羁绊','专精'], descriptions=['暴击、斩杀与首领伤害','减伤、治疗与荆棘反击','经验、金币与篝火恢复','培养每一位宠物伙伴','只属于当前职业的战斗技巧'];
+  const visible=TALENTS.filter(t=>t.branch===talentBranch&&(!t.heroClass||t.heroClass===state.heroClass));
+  return `${heading('MANY ROOTS, YOUR OWN PATH','天赋树','五条路线，分叉前置与高阶天赋，构筑自己的战斗方式。',`<span class="talent-points">可用天赋点 <b data-bind="talent-points">${talentPoints(state)}</b></span>`)}<div class="system-note">${icon('spark')} 每个职业独立分配。初始 1 点，每级再获 1 点。高阶节点需要角色等级及全部前置达到 3 级；羁绊影响当前职业携带的宠物。</div>
+  <div class="filter-tabs talent-tabs">${branches.map(branch=>`<button data-action="talent-branch" data-id="${branch}" class="${talentBranch===branch?'selected':''}">${branch}<small>${TALENTS.filter(t=>t.branch===branch).reduce((sum,t)=>sum+(state.talents[t.id]||0),0)} 点</small></button>`).join('')}</div>
+  <section class="talent-path"><div class="section-heading"><h3>${talentBranch} · ${descriptions[branches.indexOf(talentBranch)]}</h3><span class="muted-caption">${talentBranch==='专精'?CLASSES.find(c=>c.id===state.heroClass).name:visible.length+' 个节点'}</span></div><div class="talent-node-grid">${visible.map(t=>{
+    const rank=state.talents[t.id]||0, parents=t.parents||(t.parent?[t.parent]:[]), unlocked=talentAvailable(state,t);
+    return `<article class="talent-node ${rank?'learned':''} ${t.parents?'capstone':''}"><span class="talent-tier">${rank} / ${t.max}</span><span class="talent-category">${t.parents?'终极天赋':parents.length?'进阶天赋':'起始天赋'}</span><h3>${t.name}</h3><p>每级${STAT_LABELS[t.stat]} +${statValue(t.stat,t.bonus)}</p><div class="talent-ranks">${Array.from({length:t.max},(_,n)=>`<i class="${n<rank?'filled':''}"></i>`).join('')}</div><small>${t.level?`角色 Lv.${t.level}<br>`:''}${parents.length?parents.map(id=>{const parent=TALENTS.find(x=>x.id===id);return `${(state.talents[id]||0)>=t.required?'✓':'○'} ${parent.name} ${t.required} 级`;}).join('<br>'):'无需前置天赋'}</small><button class="button secondary" data-action="talent" data-id="${t.id}" ${unlocked?'':'disabled'}>${rank===t.max?'已满级':'学习 · 1 点'}</button></article>`;
+  }).join('')}</div></section>`;
 }
 function mapView() {
-  return `${heading('THE WORLD IS DELICIOUS','旅途地图','探索途中发现隐藏首领，亲手开启下一段旅途。')}<div class="world-route">${ZONES.map((z,i)=>{const locked=i>state.unlockedZone;return `<article class="zone-card ${locked?'locked':''} ${i===state.zone?'current':''}" style="--zone-color:${z.color}"><div class="zone-card-art zone-${i}"><div class="map-mountains"></div><span class="zone-pin">${icon(locked?'lock':i===state.zone?'flag':'check')}</span>${art('ingredient',z.ingredient,74,76,2)}</div><div class="zone-card-body"><div class="eyebrow">CHAPTER 0${i+1} <span>建议 Lv.${z.level}</span></div><h3>${z.name}</h3><p>${z.title}</p><div class="zone-card-bottom"><button class="text-button" data-action="travel" data-id="${i}" ${locked||['rest','task'].includes(state.phase)?'disabled':''}>${locked?'尚未解锁':i===state.zone?'正在探索':'前往探索'} ${icon(locked?'lock':'arrow')}</button></div>${state.bossRooms[i]?`<button class="button map-boss-button" data-action="boss" data-id="${i}" ${['rest','task'].includes(state.phase)||state.inBoss?'disabled':''}>${icon('flag')} 进入 Boss 房</button>`:`<p class="map-boss-hint">${state.inBoss&&state.zone===i?'正在挑战首领':locked?'击败前一区域首领后解锁':'探索中有机会发现 Boss 房'}</p>`}</div></article>`;}).join('')}</div><p class="page-hint">${icon('flag')} Boss 房需要手动进入。击败首领解锁下一站；发现的入口会保留，离线期间也不会自动进入。</p>`;
+  return `${heading('THE WORLD IS DELICIOUS','旅途地图','探索途中发现隐藏首领，亲手开启下一段旅途。')}<div class="world-route">${ZONES.map((z,i)=>{const locked=i>state.unlockedZone;return `<article class="zone-card ${locked?'locked':''} ${i===state.zone?'current':''}" style="--zone-color:${z.color}"><div class="zone-card-art zone-${i}"><div class="map-mountains"></div><span class="zone-pin">${icon(locked?'lock':i===state.zone?'flag':'check')}</span>${art('ingredient',z.ingredient,74,76,2)}</div><div class="zone-card-body"><div class="eyebrow">CHAPTER 0${i+1} <span>建议 Lv.${z.level}</span></div><h3>${z.name}</h3><p>${z.title}</p><div class="zone-card-bottom"><button class="text-button" data-action="travel" data-id="${i}" ${locked||['rest','task'].includes(state.phase)?'disabled':''}>${locked?'尚未解锁':i===state.zone?'正在探索':'前往探索'} ${icon(locked?'lock':'arrow')}</button></div>${state.bossRooms[i]?`<button class="button map-boss-button" data-action="boss" data-id="${i}" ${['rest','task'].includes(state.phase)||state.inBoss?'disabled':''}>${icon('flag')} 进入 Boss 房</button>`:`<p class="map-boss-hint">${state.inBoss&&state.zone===i?'正在挑战首领':locked?'击败前一区域首领后解锁':'探索中有机会发现 Boss 房'}</p>`}</div></article>`;}).join('')}</div><p class="page-hint">${icon('flag')} 默认保留入口，手动挑战；开启「主动挑战 Boss」后，探索结束会自动进入，离线期间也生效。挑战失败或撤退会关闭开关。</p>`;
 }
 function renderView() {
   lastProgression=progressionKey();
@@ -281,8 +296,9 @@ function progressionKey() {
 function syncUI() {
   const st=stats(state), zone=ZONES[state.zone], total=Object.values(state.inventory).reduce((a,b)=>a+b,0);
   const resting=state.phase==='rest';
+  const autoBoss=document.getElementById('auto-boss');if(autoBoss){autoBoss.checked=state.autoBoss;autoBoss.disabled=!ownsGame;}
   const values={ gold:number(state.gold), inventory:number(total), level:state.level, hp:state.hp, maxHp:st.maxHp, xp:state.xp, xpNeeded:xpNeeded(state.level), attack:st.attack, defense:st.defense, crit:statValue('crit',st.crit), attackSpeed:st.speed, luck:st.luck, dodge:statValue('dodge',st.dodge), lifesteal:statValue('lifesteal',st.lifesteal), 'talent-points':talentPoints(state), 'revival-countdown':revivalCountdown(), 'encounter-mode':state.inBoss?'首领领地':'野外探索', chapter:String(state.zone+1).padStart(2,'0'), stage:`区域 0${state.zone+1}`, round:String(state.round).padStart(2,'0'), speed:state.speed, 'pause-label':state.running?'暂停':'继续', 'battle-status':!ownsGame?'另一窗口正在冒险':resting?'等待复活':!state.running?'休息一下':state.phase==='travel'?'寻找下一位对手':'自动战斗中', 'global-status':!ownsGame?'已在另一窗口继续冒险':resting?`复活倒计时 ${revivalCountdown()}`:state.running?'冒险正在自动进行':'冒险已暂停', turn:resting?`复活倒计时 ${revivalCountdown()}`:state.phase==='travel'?'拾起战利品，继续前行':state.phase==='hero'?'花花准备出手':'魔物准备出手', discovered:Object.keys(state.discovered).length };
-  const notice=document.getElementById('encounter-notice'), noticeKey=`${resting}|${state.reviveAt}|${state.inBoss}|${state.bossRooms[state.zone]}|${state.zone}`;
+  const notice=document.getElementById('encounter-notice'), noticeKey=`${state.heroClass}|${resting}|${state.reviveAt}|${state.inBoss}|${state.bossRooms[state.zone]}|${state.zone}`;
   if(notice && notice.dataset.key!==noticeKey){notice.innerHTML=encounterNotice();notice.dataset.key=noticeKey;}
   const journey=document.getElementById('journey-panel'),journeyKey=`${state.phase==='event'}|${state.journeyCount}|${state.shopRevision}|${resting}|${state.fieldTask?.startedAt}|${state.fieldTask?.completedAt}`;
   if(journey&&journey.dataset.key!==journeyKey){journey.innerHTML=journeyPanel();journey.dataset.key=journeyKey;}
@@ -293,7 +309,7 @@ function syncUI() {
   }
   if(state.phase==='task'){values['battle-status']=!ownsGame?'另一窗口正在冒险':'正在处理旅途事务';if(ownsGame)values['global-status']='花花正在忙碌，事务按现实时间处理';values.turn=`${FIELD_TASKS[state.fieldTask.kind].name} · 完成后继续探索`;}
   if(['travel','event','rest','task'].includes(state.phase))values.round='—';
-  if(state.heroClass==='tamer'&&['hero','enemy'].includes(state.phase))values.turn=state.activeBeast?`${beastName(state.beasts[state.activeBeast])}并肩作战`:beastBattleStatus();
+  if(state.activeBeast&&['hero','enemy'].includes(state.phase))values.turn=state.activeBeast?`${beastName(state.beasts[state.activeBeast])}并肩作战`:beastBattleStatus();
   Object.entries(values).forEach(([key,value])=>setText(`[data-bind="${key}"]`,value));
   document.querySelectorAll('[data-bar="hp"]').forEach(el=>el.style.width=`${Math.max(0,state.hp/st.maxHp*100)}%`);
   document.querySelectorAll('[data-bar="xp"]').forEach(el=>el.style.width=`${state.xp/xpNeeded(state.level)*100}%`);
@@ -303,7 +319,7 @@ function syncUI() {
   document.querySelectorAll('[data-gear-level]').forEach(el=>el.textContent=`+${state.gear[el.dataset.gearLevel]}`);
   document.querySelectorAll('[data-gear-cost]').forEach(el=>el.textContent=number(gearCost(state,el.dataset.gearCost)));
   document.querySelectorAll('[data-gear-materials]').forEach(el=>el.textContent=Object.entries(gearMaterialCost(state,el.dataset.gearMaterials)).map(([id,n])=>`${MATERIALS.find(m=>m.id===id).name} ${number(state.materials[id])}/${number(n)}`).join(' · '));
-  document.querySelectorAll('[data-action="upgrade"]').forEach(el=>{const cost=gearMaterialCost(state,el.dataset.id);el.disabled=!ownsGame||(state.heroClass==='tamer'&&el.dataset.id==='weapon')||state.gear[el.dataset.id]>=100||state.gold<gearCost(state,el.dataset.id)||Object.entries(cost).some(([id,n])=>state.materials[id]<n);el.title=`消耗金币 ${number(gearCost(state,el.dataset.id))}，${Object.entries(cost).map(([id,n])=>`${MATERIALS.find(m=>m.id===id).name} ${number(n)}`).join('、')}`;});
+  document.querySelectorAll('[data-action="upgrade"]').forEach(el=>{const cost=gearMaterialCost(state,el.dataset.id);el.disabled=!ownsGame||state.gear[el.dataset.id]>=100||state.gold<gearCost(state,el.dataset.id)||Object.entries(cost).some(([id,n])=>state.materials[id]<n);el.title=`消耗金币 ${number(gearCost(state,el.dataset.id))}，${Object.entries(cost).map(([id,n])=>`${MATERIALS.find(m=>m.id===id).name} ${number(n)}`).join('、')}`;});
   document.querySelectorAll('[data-action="talent"]').forEach(el=>el.disabled=!ownsGame||!talentAvailable(state,TALENTS.find(t=>t.id===el.dataset.id)));
   document.querySelectorAll('[data-action="craft"]').forEach(el=>{const b=BLUEPRINTS.find(b=>b.id===el.dataset.id),cost=craftingCost(state,b);el.disabled=!ownsGame||!state.blueprints.includes(b.id)||state.gold<cost.gold||state.inventory[b.ingredient]<cost.ingredient||Object.entries(cost.materials).some(([key,n])=>state.materials[key]<n);});
   document.querySelectorAll('[data-action="boss"]').forEach(el=>el.disabled=!ownsGame||resting||state.phase==='task'||state.inBoss||!state.bossRooms[Number(el.dataset.id)]);
@@ -328,8 +344,16 @@ function syncUI() {
   document.querySelectorAll('[data-achievement-progress]').forEach(el=>{const a=ACHIEVEMENTS.find(a=>a.id===el.dataset.achievementProgress);el.textContent=`${Math.min(a.goal,achievementProgress(state,a))} / ${a.goal}`;});
   document.querySelectorAll('[data-action="claim"]').forEach(el=>{const a=ACHIEVEMENTS.find(a=>a.id===el.dataset.id);el.disabled=state.claimed.includes(a.id)||achievementProgress(state,a)<a.goal;});
   if(state.fieldTask?.completedAt===null){setText('[data-task-countdown]',countdown(state.fieldTask.finishAt));document.querySelectorAll('[data-task-progress]').forEach(el=>el.style.width=`${Math.min(100,Math.max(0,(Date.now()-state.fieldTask.startedAt)/(state.fieldTask.finishAt-state.fieldTask.startedAt)*100))}%`);}
-  document.querySelectorAll('[data-action="equip-item"]').forEach(el=>{const item=state.warehouse.find(x=>x.id===Number(el.dataset.id));el.disabled=!ownsGame||!item||(state.heroClass==='tamer'&&item.slot==='weapon');});
+  document.querySelectorAll('[data-action="equip-item"]').forEach(el=>{const item=state.warehouse.find(x=>x.id===Number(el.dataset.id));el.disabled=!ownsGame||!item||!canEquip(state.heroClass,item);});
   document.querySelectorAll('[data-action="unequip-item"]').forEach(el=>el.disabled=!ownsGame);
+  document.querySelectorAll('[data-class-revival]').forEach(el=>{
+    const c=CLASSES.find(c=>c.id===el.dataset.classRevival),p=classProgress(state,c.id),locked=highestLevel(state)<c.level;
+    el.textContent=locked?'尚未解锁':p.reviveAt?`休养中 · ${countdown(p.reviveAt)} 后复活`:'可以出战 · 复活计时独立';
+    el.classList.toggle('resting',!!p.reviveAt);
+    const button=el.parentElement.querySelector('[data-action="class"]');
+    button.disabled=!ownsGame||locked||state.heroClass===c.id;
+    button.textContent=state.heroClass===c.id?'当前职业':locked?`任一职业 Lv.${c.level} 解锁`:p.reviveAt?'查看休养':`切换为${c.name}`;
+  });
   syncFlyer();syncBeasts();syncMini();
 }
 
@@ -347,9 +371,9 @@ function showModal(content,wide=false) {
   if(!modal.open) modal.showModal();paintArt(modal);syncUI();
 }
 function classDialog() {
-  showModal(`<div class="eyebrow">FIVE PATHS, ONE SHARED JOURNEY</div><h2>选择你的职业旅途</h2><p class="modal-subtitle">每个职业独立保存等级、经验、穿戴装备、栏位强化与天赋。金币、素材、图纸、风味和仓库共享。任一职业达到要求即可永久解锁新职业。</p><p class="class-switch-note">转职后恢复该职业的成长，重新开始探索；等级不足时返回较低等级的区域。休养和现实事务的期限保持不变。</p><div class="class-grid">${CLASSES.map(c=>{
+  showModal(`<div class="eyebrow">FIVE PATHS, ONE SHARED JOURNEY</div><h2>选择你的职业旅途</h2><p class="modal-subtitle">每个职业独立保存等级、经验、穿戴装备、栏位强化与天赋。金币、素材、图纸、风味和仓库共享。任一职业达到要求即可永久解锁新职业。</p><p class="class-switch-note">转职后恢复该职业的成长，重新开始探索；等级不足时返回较低等级的区域。各职业死亡后分别等待现实时间 1 小时，可随时切换其他存活职业继续游玩。切换不重置任何复活或事务期限。</p><div class="class-grid">${CLASSES.map(c=>{
     const p=classProgress(state,c.id),locked=highestLevel(state)<c.level;
-    return `<article class="class-card ${state.heroClass===c.id?'selected':''}">${art('hero',c.id,120,142,3)}<h3>${c.name} <small>Lv.${p.level}</small></h3><span>${c.label}</span><p>${c.description}</p><div class="class-progress">经验 ${number(p.xp)} / ${number(xpNeeded(p.level))}<br>装备 ${Object.values(p.equipped).filter(Boolean).length} 件 · 强化合计 +${Object.values(p.gear).reduce((a,b)=>a+b,0)}</div><button class="button ${state.heroClass===c.id?'secondary':''}" data-action="class" data-id="${c.id}" ${locked?'disabled':''}>${state.heroClass===c.id?'当前职业':locked?`任一职业 Lv.${c.level} 解锁`:`切换为${c.name}`}</button></article>`;
+    return `<article class="class-card ${state.heroClass===c.id?'selected':''}">${art('hero',c.id,120,142,3)}<h3>${c.name} <small>Lv.${p.level}</small></h3><span>${c.label}</span><p>${c.description}</p><div class="class-progress">经验 ${number(p.xp)} / ${number(xpNeeded(p.level))}<br>装备 ${Object.values(p.equipped).filter(Boolean).length} 件 · 强化合计 +${Object.values(p.gear).reduce((a,b)=>a+b,0)}</div><p class="class-revival" data-class-revival="${c.id}"></p><button class="button ${state.heroClass===c.id?'secondary':''}" data-action="class" data-id="${c.id}" ${locked?'disabled':''}>${state.heroClass===c.id?'当前职业':locked?`任一职业 Lv.${c.level} 解锁`:`切换为${c.name}`}</button></article>`;
   }).join('')}</div>`,true);
 }
 function achievementsDialog() {
@@ -359,7 +383,7 @@ function settingsDialog() {
   showModal(`<div class="eyebrow">MAKE YOURSELF AT HOME</div><h2>旅途小设置</h2><p class="modal-subtitle">按你喜欢的节奏，慢慢成为更美味的自己。</p><div class="setting-row"><div><b>战斗音效</b><p>轻柔的像素打击音，默认关闭</p></div><button class="button secondary sound-button" data-action="sound" aria-label="切换音效">${icon(state.sound?'sound':'mute')}</button></div><div class="setting-row"><div><b>本地存档</b><p>${storageAvailable?'每 5 秒自动保存，也可手动备份。':'浏览器存储不可用，请导出备份。'}</p></div><button class="button secondary" data-action="save">立即保存</button></div><div class="setting-row"><div><b>带着花花去别处</b><p>通过存档文件在不同浏览器之间迁移</p></div><div class="setting-buttons"><button class="button secondary" data-action="export">${icon('download')} 导出</button><button class="button secondary" data-action="import">导入</button></div></div><div class="setting-note">${icon('clock')} 页面在后台时继续按真实时间结算。浏览器休眠或关闭后，重回冒险可领取最长 8 小时的离线收获。</div>`);
 }
 function helpDialog() {
-  showModal(`<div class="eyebrow">YOUR FIRST LITTLE ADVENTURE</div><h2>欢迎来到爆米花物语</h2><p class="modal-subtitle">花花是一颗原味爆米花。它相信世界上一定有一种调料，能让自己变得独一无二。</p><div class="help-steps"><p><b>01 · 放心出发</b>战斗自动进行，击败魔物获得经验、金币、调料、素材、装备和图纸。更高评分的装备自动穿戴，多余装备存入仓库。</p><p><b>02 · 越来越美味</b>装备工坊中可按图纸制作武器、防具、护符和戒指；强化同时消耗金币与素材，并随栏位保留。闲置装备可单件或整组分解；自动分解可筛选品质、等级和部位，锁定装备始终保留。职业等级、经验、装备、强化和天赋独立保存；共享仓库可手动取用装备。新职业从 Lv.1 开始，天赋初始赠送 1 点，每次升级再得 1 点；厨房风味对所有职业永久生效。</p><p><b>03 · 去更远的地方</b>持续击败区域魔物，有机会发现隐藏 Boss 房。入口会保留，必须手动进入；胜利获得专属装备、素材和图纸，并解锁下一站。</p><p><b>04 · 属于你的战斗方式</b>速度越高出手越快；幸运提高掉率与品质；闪避可躲开攻击；生命偷取按实际造成的伤害恢复生命。装备与天赋都能提升这些属性。</p><p><b>05 · 倒下后，再出发</b>死亡后扣除 10% 金币与各类素材（向上取整），保留等级、装备、图纸、天赋和强化。现实时间 10 分钟后自动满血复活；暂停、倍速和刷新不影响倒计时。</p><p><b>06 · 小径上的新故事</b>战斗与事件之间会经过约 20 秒的探索（1×），可能采到素材、意外受伤、休息恢复或收到传单。探索不显示剩余时间。采集晶矿、修复营地、照料精灵均需要现实时间 5 分钟，处理期间停止遇怪，到期自动发放谢礼并继续探索。可手动花金币订购传单商品，按现实时间配送并自动入库。传单每 30 分钟刷新补货，已付款订单不受影响；查看传单和等待配送都不会中断挂机。</p><p><b>07 · 把冒险装进小窗</b>点击「小窗冒险」打开独立观战窗口。支持画中画的浏览器可置顶；其余浏览器打开普通小窗口。暂停时不积累离线收益。</p><p><b>08 · 和魔物成为伙伴</b>Lv.1 可选择驯兽师，首次转职赠送黄油小菇；不使用武器，由契约兽攻击并优先承伤。普通魔物基础签约概率 20%，重复契约变成同种晶体，可在营地强化。伙伴倒下后现实时间 10 分钟恢复，自动换召期间花花承伤；全部伙伴阵亡时以 10% 攻击力自保。出战伙伴通过胜利获得独立经验，初始等级上限 Lv.5，满级消耗素材进阶，每阶解锁 5 级，最高 Lv.30。驯兽师击败首领必得 Boss 宝宝，宝宝即可出战，进阶至 1、3、5 阶分别变为幼年、成熟、觉醒形态。</p></div><button class="button" data-action="close">准备好了，继续冒险 ${icon('arrow')}</button>`);
+  showModal(`<div class="eyebrow">YOUR FIRST LITTLE ADVENTURE</div><h2>欢迎来到爆米花物语</h2><p class="modal-subtitle">花花是一颗原味爆米花。它相信世界上一定有一种调料，能让自己变得独一无二。</p><div class="help-steps"><p><b>01 · 放心出发</b>战斗自动进行，击败魔物获得经验、金币、调料、素材、装备和图纸。更高评分的装备自动穿戴，多余装备存入仓库。</p><p><b>02 · 越来越美味</b>装备工坊中可按图纸制作武器、防具、护符和戒指；强化同时消耗金币与素材，并随栏位保留。闲置装备可单件或整组分解；自动分解可筛选品质、等级和部位，锁定装备始终保留。职业等级、经验、装备、强化和天赋独立保存；共享仓库可手动取用装备。新职业从 Lv.1 开始，天赋初始赠送 1 点，每次升级再得 1 点；厨房风味对所有职业永久生效。</p><p><b>03 · 去更远的地方</b>持续击败区域魔物，有机会发现隐藏 Boss 房。默认保留入口，可手动进入或开启主动挑战；胜利获得专属装备、素材和图纸，并解锁下一站。自动挑战成功后保持开启，下次发现 Boss 房继续挑战；失败后自动关闭。</p><p><b>04 · 属于你的战斗方式</b>速度越高出手越快；幸运提高掉率与品质；闪避可躲开攻击；生命偷取按实际造成的伤害恢复生命。装备与天赋都能提升这些属性。</p><p><b>05 · 倒下后，再出发</b>死亡后扣除 10% 金币与各类素材（向上取整），保留等级、装备、图纸、天赋和强化。每个职业独立等待现实时间 1 小时后满血复活；可以切换其他存活职业继续冒险，暂停、倍速和刷新不影响倒计时。</p><p><b>06 · 小径上的新故事</b>战斗与事件之间会经过约 20 秒的探索（1×），可能采到素材、意外受伤、休息恢复或收到传单。探索不显示剩余时间。采集晶矿、修复营地、照料精灵均需要现实时间 5 分钟，处理期间停止遇怪，到期自动发放谢礼并继续探索。可手动花金币订购传单商品，按现实时间配送并自动入库。传单每 30 分钟刷新补货，已付款订单不受影响；查看传单和等待配送都不会中断挂机。</p><p><b>07 · 把冒险装进小窗</b>点击「小窗冒险」打开独立观战窗口。支持画中画的浏览器可置顶；其余浏览器打开普通小窗口。暂停时不积累离线收益。</p><p><b>08 · 孵化你的伙伴</b>所有职业击败怪物均有极低概率获得宠物蛋。普通蛋在营地孵化 1 小时，Boss 蛋 4 小时，随机生成资质与技能。同种宠物可以拥有多只。选定的宠物与角色同时攻击，通过战斗升至 Lv.100，也能消耗素材进化五次，每次改变外观。营地最多编入四只宠物，阵亡后按编队顺序接替出战，跳过复活中的伙伴；现实时间 1 小时后复活。编队可调整顺序或更换成员。篝火事件为角色与所有存活宠物恢复生命。驯兽师可使用武器，每次攻击鼓舞宠物 6 秒；五个职业各有专属武器、防具与专精天赋。</p></div><button class="button" data-action="close">准备好了，继续冒险 ${icon('arrow')}</button>`);
 }
 function showOfflineReport() {
   if(!offlineReport) return;
@@ -406,7 +430,7 @@ function syncMini() {
 function drawMini() { if(miniCanvas && miniWindow && !miniWindow.closed) drawScene(miniCanvas,state,performance.now(),{...visual,scroll:sceneScroll,monsterKind:MONSTERS[state.enemy.id].kind}); }
 
 async function handleAction(action, id, target) {
-  const mutations=['equip-item','unequip-item','beast-prefer','beast-upgrade','beast-feed','upgrade','cook','travel','class','claim','pause','speed','import','craft','talent','boss','salvage','salvage-stack','salvage-matching','item-lock','salvage-save','order','flyer-discard'];
+  const mutations=['equip-item','unequip-item','hatch','beast-prefer','formation-add','formation-remove','formation-move','beast-feed','upgrade','cook','travel','class','claim','pause','speed','import','craft','talent','boss','salvage','salvage-stack','salvage-matching','item-lock','salvage-save','order','flyer-discard'];
   if(!ownsGame && mutations.includes(action)) {notify('冒险已在另一个窗口运行，请在那个窗口操作。');return;}
   if(ownsGame) advance(state);
   let result;
@@ -416,7 +440,11 @@ async function handleAction(action, id, target) {
     case 'equip-item': result=equipWarehouseItem(state,Number(id));break;
     case 'unequip-item': result=unequipItem(state,id);break;
     case 'beast-prefer': result=preferBeast(state,id);break;
-    case 'beast-upgrade': result=upgradeBeast(state,id);break;
+    case 'formation-add': result=setPetFormation(state,[...state.petFormation,id]);break;
+    case 'formation-remove': result=setPetFormation(state,state.petFormation.filter(petId=>petId!==id));break;
+    case 'formation-move': result=moveFormationPet(state,id,Number(target.dataset.direction));break;
+    case 'hatch': result=startIncubation(state,id);break;
+    case 'talent-branch': talentBranch=id;renderView();break;
     case 'beast-feed': result=feedBeast(state,id);break;
     case 'salvage': result=salvageItem(state,Number(id));break;
     case 'salvage-stack': result=salvageItem(state,Number(id),state.warehouse.find(item=>item.id===Number(id))?.count);break;
@@ -475,6 +503,7 @@ async function handleAction(action, id, target) {
   syncUI();save();
 }
 document.addEventListener('click',event=>{const target=event.target.closest('[data-action]');if(!target)return;event.preventDefault();handleAction(target.dataset.action,target.dataset.id,target);});
+document.addEventListener('change',event=>{if(event.target.id==='auto-boss'){if(!ownsGame){event.target.checked=state.autoBoss;return;}state.autoBoss=event.target.checked;save();notify(state.autoBoss?'已开启主动挑战：探索结束将进入已发现的 Boss 房；胜利后保持开启，失败后关闭，离线同样生效。':'已关闭主动挑战，Boss 入口会保留。');}});
 document.addEventListener('change',event=>{if(event.target.id==='auto-travel'){if(!ownsGame){event.target.checked=state.autoTravel;return;}state.autoTravel=event.target.checked;save();notify(state.autoTravel?'达到建议等级后，会自动踏上新的旅途。':'会留在当前区域，慢慢收集调料。');}});
 
 modal.addEventListener('click',event=>{if(event.target===modal){const r=modal.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)modal.close();}});

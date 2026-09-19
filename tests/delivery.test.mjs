@@ -117,7 +117,7 @@ test('discarding a flyer leaves paid parcels intact, and waiting for orders neve
 test('v3 merchant offers migrate to flyers without consuming gear or materials',()=>{
   const s=shop();s.version=3;s.tradeOffer={id:4,zone:0};s.nextTradeId=5;s.phase='event';s.wait=3;s.journeyEvent={kind:'merchant',zone:0,damage:0,healed:0,materials:{}};
   for(const key of ['flyer','nextFlyerId','orders','nextOrderId','shopRevision'])delete s[key];
-  const loaded=restore(serialize(s),9000);assert.ok(loaded);assert.equal(loaded.version, 7);
+  const loaded=restore(serialize(s),9000);assert.ok(loaded);assert.equal(loaded.version, 9);
   assert.deepEqual(loaded.flyer,{id:4,zone:0,level:1,purchased:[],refreshAt:9000+FLYER_REFRESH_MS});
   assert.equal(loaded.journeyEvent.kind,'flyer');assert.equal(loaded.gold,s.gold);assert.deepEqual(loaded.materials,s.materials);assert.deepEqual(loaded.orders,[]);
   assert.equal('tradeOffer' in loaded,false);assert.deepEqual(restore(serialize(loaded),9000),loaded);

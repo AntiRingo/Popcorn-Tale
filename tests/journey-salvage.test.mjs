@@ -82,7 +82,7 @@ test('new travel intervals last about twenty seconds and travel cannot bypass th
 });
 
 test('noncombat events gather, fail, hurt, evade, heal and receive flyers without counting kills',()=>{
-  for(const [seed,kind] of [[1973,'cache'],[1972,'cache'],[1974,'hazard'],[1976,'flyer'],[1975,'hazard'],[1978,'spring']]) {
+  for(const [seed,kind] of [[1973,'cache'],[1972,'cache'],[1974,'hazard'],[1976,'flyer'],[1975,'hazard'],[1978,'campfire'],[1977,'spring']]) {
     const s=eventAt(seed);assert.equal(s.journeyEvent.kind,kind);assert.equal(s.phase,'event');assert.equal(s.wait,JOURNEY_EVENT_TICKS);
     assert.equal(s.kills,0);assert.equal(s.zoneKills[0],0);assert.equal(s.xp,0);assert.equal(s.journeyCount,1);
     assert.deepEqual(restore(serialize(s),s.lastTick),s);
@@ -100,7 +100,7 @@ test('event rewards resolve exactly once across reloads and paused time',()=>{
   assert.equal(restored.phase,'travel');assert.ok(restored.wait>=JOURNEY_MIN_TICKS);assert.equal(restored.journeyCount,1);assert.deepEqual(restored.materials,materials);
 });
 
-test('an event can kill the hero and uses the same ten-minute resurrection and one-time loss',()=>{
+test('an event can kill the hero and uses the same one-hour resurrection and one-time loss',()=>{
   const s=eventAt(1974,1);assert.equal(s.phase,'rest');assert.equal(s.hp,0);assert.equal(s.gold,108);assert.equal(s.reviveAt,s.lastTick+REVIVE_MS);
   const loaded=restore(serialize(s),s.lastTick);assert.ok(loaded);
   advance(loaded,loaded.reviveAt-1);assert.equal(loaded.gold,108);assert.equal(loaded.hp,0);
@@ -124,12 +124,13 @@ test('auto recycling and journey events stay deterministic between foreground an
 
 test('v2 migration retains items, resources, progress and death losses while adding safe defaults',()=>{
   const s=eventAt(1974,1);s.version=2;s.level=7;s.xp=24;s.materials.ore=33;
+  s.reviveAt=s.lastTick+10*60000;
   const x=spare(s,{quality:2});
   delete s.materials.essence;delete s.deathLoss.materials.essence;
   for(const key of ['autoSalvage','salvaged','inventoryRevision','journeyCount','journeyEvent','nextFlyerId','flyer'])delete s[key];
-  const loaded=restore(serialize(s),s.lastTick);assert.ok(loaded);assert.equal(loaded.version, 7);
+  const loaded=restore(serialize(s),s.lastTick);assert.ok(loaded);assert.equal(loaded.version, 9);
   assert.equal(loaded.xp,24);assert.equal(loaded.level,7);assert.equal(loaded.materials.ore,33);assert.equal(loaded.materials.essence,0);
-  assert.equal(loaded.reviveAt,s.reviveAt);assert.equal(loaded.deathLoss.materials.essence,0);assert.deepEqual(loaded.warehouse,[x]);
+  assert.equal(loaded.reviveAt,s.lastTick+REVIVE_MS);assert.equal(loaded.deathLoss.materials.essence,0);assert.deepEqual(loaded.warehouse,[x]);
   assert.equal(loaded.autoSalvage.enabled,false);assert.equal(loaded.flyer,null);
 });
 

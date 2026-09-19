@@ -1,4 +1,4 @@
-import { MONSTERS, beastStats, beastForm } from './engine.js';
+import { MONSTERS, beastStats, beastForm, beastSpecies } from './engine.js';
 
 const PALETTE = {
   outline: '#343d37', cream: '#fff0c5', pale: '#fff8df', gold: '#eac66d', ochre: '#b28b4e',
@@ -49,6 +49,8 @@ export function drawHero(ctx, x, y, scale = 3, heroClass = 'knight', frame = 0, 
     r(-10, -13, 4, 5, 'skin'); r(7, -14, 4, 4, 'skin');
     r(-11, -7, 5, 5, 'brown'); r(-10, -6, 3, 2, 'gold');
     r(0, -13, 2, 3, 'gold');
+    r(10, -18, 2, 18, 'brown'); r(9, -19, 4, 5, 'gold');
+    polygon(ctx, [[11,-19],[18,-23],[23,-19],[24,-11],[21,-6],[19,-7],[21,-13],[20,-18],[17,-20]], '#d4b477');
   } else {
     r(-6, -29, 12, 7, 'white'); r(-4, -33, 8, 5, 'white'); r(-1, -36, 3, 4, 'white');
     r(-1, -32, 2, 7, 'gold'); r(-3, -30, 6, 2, 'gold'); r(-6, -24, 12, 2, 'gold');
@@ -112,7 +114,7 @@ export function drawMonster(ctx, x, y, scale = 3, kind = 'mushroom', frame = 0, 
 }
 
 export function drawBeast(ctx, x, y, scale, beast, frame = 0) {
-  const monster = MONSTERS[beast.id], form = beastForm(beast);
+  const monster = MONSTERS[beastSpecies(beast)], form = beastForm(beast);
   if (!form) { drawMonster(ctx, x, y, scale, monster.kind, frame); return; }
   ctx.save(); ctx.translate(Math.round(x), Math.round(y)); ctx.scale(scale * form.scale, scale * form.scale);
   if (form.id === 'awakened') {
@@ -121,12 +123,17 @@ export function drawBeast(ctx, x, y, scale, beast, frame = 0) {
       box(ctx, side*24-1, -39-frame*2, 3, 3, '#fff0b6');
     }
   }
-  drawMonster(ctx, 0, 0, 1, monster.kind, frame, ['mature', 'awakened'].includes(form.id));
+  drawMonster(ctx, 0, 0, 1, monster.kind, frame, ['mature', 'elite', 'awakened'].includes(form.id));
   if (form.id === 'baby') {
     box(ctx, -4, -5+ (frame ? -1 : 0), 9, 3, '#f2d8a0');
     box(ctx, -1, -5+ (frame ? -1 : 0), 3, 2, '#d5a770');
   } else if (form.id === 'young') {
     box(ctx, -7, -7, 14, 3, '#89ac80'); box(ctx, 5, -6, 4, 8, '#6c966e');
+  } else if (form.id === 'growing') {
+    box(ctx, -10, -9, 20, 4, '#829daf'); box(ctx, -11, -10, 4, 7, '#b5c7cf'); box(ctx, 7, -10, 4, 7, '#b5c7cf');
+  } else if (form.id === 'elite') {
+    polygon(ctx, [[-12,-29],[-16,-38],[-7,-33],[0,-41],[7,-33],[16,-38],[12,-29]], '#c8b170');
+    box(ctx, -2, -35, 5, 5, '#b997c7');
   } else if (form.id === 'awakened') {
     box(ctx, -1, -37, 3, 4, '#b1d6c4'); box(ctx, -2, -43-frame, 5, 2, '#fff0b6');
   }
@@ -259,7 +266,7 @@ export function drawScene(canvas, s, time = 0, visual = {}) {
   const frame = Math.floor(time/(walk ? 180 : 550))%2;
   const ranged=s.heroClass!=='knight';
   const hx=142 + (visual.type==='hero'?kick*(ranged?5:103):0);
-  const pet=s.heroClass==='tamer'&&s.activeBeast?s.beasts[s.activeBeast]:null;
+  const pet=s.activeBeast?s.beasts[s.activeBeast]:null;
   const px=202+(visual.type==='beast'?kick*60:0);
   const ex=280 - (visual.type==='enemy'?kick*100:visual.type==='beast-hit'?kick*52:0);
   ctx.globalAlpha=.18; box(ctx,hx-19,141,37,4,'#283d2e');
@@ -272,11 +279,12 @@ export function drawScene(canvas, s, time = 0, visual = {}) {
     const maxHp=beastStats(s,pet.id).maxHp;
     ctx.globalAlpha=.18;box(ctx,px-17,141,34,4,'#283d2e');ctx.globalAlpha=1;
     if(visual.type==='beast-hit'&&kick>.9)ctx.globalAlpha=.55;
-    drawBeast(ctx,px,142,MONSTERS[pet.id].boss?1.05:1.35,pet,frame);
+    drawBeast(ctx,px,142,MONSTERS[beastSpecies(pet)].boss?1.05:1.35,pet,frame);
+    if(s.heroClass==='tamer'&&s.petBuffMs>0){ctx.strokeStyle='#eed08e';ctx.beginPath();ctx.ellipse(px,140,21,6,0,0,Math.PI*2);ctx.stroke();}
     ctx.globalAlpha=1;
     box(ctx,px-17,93,34,3,'#4c6758');box(ctx,px-17,93,34*pet.hp/maxHp,3,'#b8d68d');
-    ctx.fillStyle='#e4efc9';ctx.font='7px sans-serif';ctx.textAlign='center';ctx.fillText(beastForm(pet)?.name || '契约伙伴',px,88);
-  } else if(s.heroClass==='tamer'&&s.summonCooldown&&s.phase!=='rest') {
+    ctx.fillStyle='#e4efc9';ctx.font='7px sans-serif';ctx.textAlign='center';ctx.fillText(beastForm(pet)?.name || '宠物伙伴',px,88);
+  } else if(s.summonCooldown&&s.phase!=='rest') {
     ctx.strokeStyle='#d2deb0';ctx.lineWidth=1;ctx.beginPath();ctx.ellipse(202,138,19,5,0,0,Math.PI*2);ctx.stroke();
     ctx.fillStyle='#e4efc9';ctx.font='7px sans-serif';ctx.textAlign='center';ctx.fillText('召唤中…',202,117);
     for(let i=0;i<3;i++)box(ctx,187+i*13,128-Math.round((time/90+i*7)%17),2,2,'#e2e9b8');
@@ -292,7 +300,12 @@ export function drawScene(canvas, s, time = 0, visual = {}) {
   }
   if((s.phase==='event' && s.journeyEvent) || s.phase==='task') {
     const kind=s.phase==='task'?s.fieldTask.kind:s.journeyEvent.kind;
-    if(kind==='cache') {
+    if(kind==='campfire') {
+      box(ctx,ex-18,138,36,5,'#77563b');box(ctx,ex-12,133,24,6,'#986940');
+      polygon(ctx,[[ex-13,134],[ex-8,119],[ex-4,125],[ex+1,108+frame*3],[ex+8,122],[ex+12,119],[ex+15,135]],'#d98449');
+      polygon(ctx,[[ex-7,135],[ex-3,124],[ex+2,119+frame*3],[ex+8,135]],'#f4cc71');
+      for(let i=0;i<4;i++)box(ctx,ex-11+i*7,106-(time/70+i*9)%20,2,2,'#f7dc95');
+    } else if(kind==='cache') {
       box(ctx,ex-15,124,30,18,'#8b6644');box(ctx,ex-17,121,34,7,'#b79456');box(ctx,ex-2,122,4,11,'#f1d780');
       box(ctx,ex-11,130,22,2,'#604c35');
     } else if(kind==='flyer') {
